@@ -1,2 +1,2 @@
 # fsearch
-Search text in files quickly, especially for log searching. Directories are supported.
+Search text in files quickly(using linux mmap), especially for log searching. Directories are supported.
