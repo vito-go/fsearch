@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"time"
 )
 
 func init() {
@@ -25,8 +26,15 @@ func main() {
 	}
 	const defaultMaxLines = 20
 	mux := http.NewServeMux()
-	mux.HandleFunc("/search", func(writer http.ResponseWriter, request *http.Request) {
-		query := request.URL.Query()
+	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+			return
+		}
+		query := r.URL.Query()
 		kws := query["kw"]
 		log.Println("kws is=>", kws)
 		maxLines, err := strconv.Atoi(query.Get("maxLines"))
@@ -34,8 +42,9 @@ func main() {
 			maxLines = defaultMaxLines
 		}
 		lines := search.SearchFromEnd(maxLines, kws...)
+
 		for _, line := range lines {
-			_, _ = writer.Write([]byte(line + "\n"))
+			_, _ = w.Write([]byte(line + "\n"))
 		}
 	})
 	log.Println("start server at :8081")
