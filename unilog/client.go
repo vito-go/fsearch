@@ -51,9 +51,7 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 // RegisterToCenter 用于注册服务，注册成功后，会每隔30秒检查一次files是否有变化，如果有变化，会重新注册 注册路由地址
 // export for register
 func (c *Client) RegisterToCenter(wsAddr string) {
-	c.once.Do(func() {
-		go c.register(wsAddr, c.appName, c.hostName)
-	})
+	go c.register(wsAddr, c.appName, c.hostName)
 }
 
 func (c *Client) RegisterWithHTTP(port uint16, searchPath string) {

@@ -1,9 +1,17 @@
 # fsearch
-Search text in files quickly(using linux mmap), especially for log searching. Directories are supported.
 
+Search text in files quickly(using linux mmap), especially for log searching. Directories are supported.
+Support local remote online registration search.
 ## Quick Start
 
 ### Server
+
+```shell
+	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
+	unzip web.zip
+
+```
+
 ```go
 package main
 
@@ -22,12 +30,13 @@ func main() {
 	}
 	server := unilog.NewServer("/search", "/", "/ws", 9097)
 	log.Println("server start: 9097")
-	//bash: git clone github.com/vito-go/fsearch_flutter && flutter build web
+	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir(filepath.Join(homeDir, "go/src/github.com/vito-go/fsearch_flutter/build/web"))
 	server.Start(staticWebFile)
 }
 
 ```
+
 ### Client
 
 ```go
@@ -48,15 +57,27 @@ func main() {
 		panic(err)
 	}
 	appName := "demoApp"
-	searchDir := "github.com/vito-go/fsearch"
-	hostName, _ := util.GetPrivateIP() //hostName can be any flag
+	searchDir := "github.com/vito-go/fsearch" // can be any directory, especially for logs/ 
+	hostName, _ := util.GetPrivateIP()        //hostName can be any flag
 	cli, err := unilog.NewClient(filepath.Join(homeDir, searchDir), appName, hostName)
 	if err != nil {
 		panic(err)
 	}
 	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
-	// write here your own code instead of select {}
+	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
+ 	// write here your own code instead of select {}
 	select {}
 }
 
 ```
+
+## Demo
+
+http://vitogo.tpddns.cn:9097
+
+<img src="./fsearch.png" />
+<img src="./fsearch1.png" />
+<img src="./fsearch2.png" />
+
+## TODO
+- auth for each app
