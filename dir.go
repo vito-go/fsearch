@@ -1,20 +1,25 @@
 package fsearch
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type DirSearch struct {
-	rwMutex   sync.RWMutex
-	fileMap   map[string]*FileSearch
-	dir       string
-	closeChan chan struct{}
+	rwMutex sync.RWMutex
+	fileMap map[string]*FileSearch
+	dir     string
+
 	closeOnce sync.Once // protect closeChan
+	closed    atomic.Bool
 }
 
 func NewDirSearch(dir string) (*DirSearch, error) {
@@ -31,11 +36,23 @@ func NewDirSearch(dir string) (*DirSearch, error) {
 }
 func (f *DirSearch) Close() {
 	f.closeOnce.Do(func() {
+		f.closed.Store(true)
 		for _, search := range f.fileMap {
 			search.Close()
 		}
-		close(f.closeChan)
 	})
+}
+func (f *DirSearch) IsClosed() bool {
+	return f.closed.Load()
+}
+func (f *DirSearch) Files() []string {
+	f.rwMutex.RLock()
+	defer f.rwMutex.RUnlock()
+	var files []string
+	for fileName := range f.fileMap {
+		files = append(files, fileName)
+	}
+	return files
 }
 
 func (f *DirSearch) SearchFromLastFile(maxLines int, fromEnd bool, kws ...string) []string {
@@ -101,6 +118,58 @@ func (f *DirSearch) SearchFromEnd(maxLines int, kws ...string) []string {
 	}
 	return result
 }
+func (f *DirSearch) SearchFromEndWithFiles(maxLines int, fileMap map[string]bool, kws ...string) []string {
+	f.rwMutex.RLock()
+	defer f.rwMutex.RUnlock()
+	var result []string
+	var searches []*FileSearch
+	for _, search := range f.fileMap {
+		if len(fileMap) > 0 {
+			if fileMap[filepath.Base(search.fileName)] {
+				searches = append(searches, search)
+			}
+			continue
+		}
+		searches = append(searches, search)
+	}
+	sort.Slice(searches, func(i, j int) bool {
+		return searches[i].updateTime.After(searches[j].updateTime)
+	})
+	for _, search := range searches {
+		lines := search.SearchFromEnd(maxLines, kws...)
+		result = append(result, lines...)
+	}
+	return result
+}
+
+func (f *DirSearch) SearchFromEndAndWrite(writer io.Writer, hostName string, maxLines int, fileMap map[string]bool, kws ...string) {
+	f.rwMutex.RLock()
+	defer f.rwMutex.RUnlock()
+	var searches []*FileSearch
+	for _, search := range f.fileMap {
+		if len(fileMap) > 0 {
+			if fileMap[filepath.Base(search.fileName)] {
+				searches = append(searches, search)
+			}
+			continue
+		}
+		searches = append(searches, search)
+	}
+	sort.Slice(searches, func(i, j int) bool {
+		return searches[i].updateTime.After(searches[j].updateTime)
+	})
+
+	for _, search := range searches {
+		lines := search.SearchFromEnd(maxLines, kws...)
+		if len(lines) == 0 {
+			continue
+		}
+		writer.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, filepath.Base(search.fileName))))
+		_, _ = writer.Write([]byte(strings.Join(lines, "\n") + "\n\n"))
+	}
+	return
+}
+
 func (f *DirSearch) SearchBy(maxLines int, end bool, fileNames []string, kws ...string) []string {
 	if len(fileNames) == 0 || len(kws) == 0 {
 		return nil
@@ -127,12 +196,73 @@ func (f *DirSearch) SearchBy(maxLines int, end bool, fileNames []string, kws ...
 	return result
 }
 
+var textExtensions = []string{
+	".txt",
+	".log",
+	".md",
+	".go",
+	".java",
+	".js",
+	".html",
+	".css",
+	".json",
+	".xml",
+	".yaml",
+	".yml",
+	".ini",
+	".conf",
+	".properties",
+	".sh",
+	".bat",
+	".cmd",
+	".php",
+	".py",
+	".c",
+	".cpp",
+	".h",
+	".hpp",
+	".cc",
+	".hh",
+	".java",
+	".cs",
+	".ts",
+	".tsx",
+	".vue",
+	".sql",
+	".rb",
+	".pl",
+	".pm",
+	".t",
+	".rs",
+	".swift",
+	".scala",
+	".groovy",
+	".kt",
+	".kts",
+	".clj",
+	".cljs",
+	".cljc",
+	".coffee",
+	".dart",
+	".erl",
+	".hrl",
+}
+
+func checkExt(fileName string) bool {
+	ext := filepath.Ext(fileName)
+	for _, e := range textExtensions {
+		if e == ext {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *DirSearch) detectDir() {
+	defer f.Close()
 	for {
-		select {
-		case <-f.closeChan:
+		if f.closed.Load() {
 			return
-		default:
 		}
 		entries, err := os.ReadDir(f.dir)
 		if err != nil {
@@ -141,7 +271,7 @@ func (f *DirSearch) detectDir() {
 		}
 		entryNameMap := make(map[string]bool, len(entries))
 		for _, entry := range entries {
-			if entry.IsDir() {
+			if !checkEntry(entry) {
 				continue
 			}
 			entryNameMap[entry.Name()] = true
@@ -157,7 +287,7 @@ func (f *DirSearch) detectDir() {
 		}
 		// 再添加新的文件
 		for _, entry := range entries {
-			if entry.IsDir() {
+			if !checkEntry(entry) {
 				continue
 			}
 			fileName := entry.Name()
@@ -171,9 +301,23 @@ func (f *DirSearch) detectDir() {
 				continue
 			}
 			f.fileMap[fileName] = fileSearch
-			log.Println("fsearch: add file", fileName)
 		}
 		f.rwMutex.Unlock()
 		time.Sleep(time.Second * 30)
 	}
+}
+func checkEntry(entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return false
+	}
+	if strings.HasPrefix(entry.Name(), ".") {
+		return false
+	}
+	if !strings.Contains(entry.Name(), ".") {
+		return false
+	}
+	if !checkExt(entry.Name()) {
+		return false
+	}
+	return true
 }

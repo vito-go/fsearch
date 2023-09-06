@@ -53,7 +53,7 @@ func NewFileSearch(fileName string) (*FileSearch, error) {
 	if err != nil {
 		return nil, err
 	}
-	const MMapTotalLen = 4 << 30
+	const MMapTotalLen = 2 << 30
 	const preLines = 1 << 20
 	t := &FileSearch{
 		mmap:        mmap,
