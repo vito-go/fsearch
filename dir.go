@@ -19,7 +19,8 @@ type DirSearch struct {
 	dir     string
 
 	closeOnce sync.Once // protect closeChan
-	closed    atomic.Bool
+	//closed    atomic.Bool // go1.19
+	closed int64 // 0 false 1 true,for version less than go1.19
 }
 
 func NewDirSearch(dir string) (*DirSearch, error) {
@@ -36,14 +37,16 @@ func NewDirSearch(dir string) (*DirSearch, error) {
 }
 func (f *DirSearch) Close() {
 	f.closeOnce.Do(func() {
-		f.closed.Store(true)
+		//f.closed.Store(true)
+		atomic.StoreInt64(&f.closed, 1)
 		for _, search := range f.fileMap {
 			search.Close()
 		}
 	})
 }
 func (f *DirSearch) IsClosed() bool {
-	return f.closed.Load()
+	//return f.closed.Load()
+	return atomic.LoadInt64(&f.closed) == 1
 }
 func (f *DirSearch) Files() []string {
 	f.rwMutex.RLock()
@@ -261,7 +264,7 @@ func checkExt(fileName string) bool {
 func (f *DirSearch) detectDir() {
 	defer f.Close()
 	for {
-		if f.closed.Load() {
+		if f.IsClosed() {
 			return
 		}
 		entries, err := os.ReadDir(f.dir)
