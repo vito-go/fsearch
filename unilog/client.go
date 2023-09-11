@@ -59,7 +59,7 @@ func (c *Client) RegisterWithHTTP(port uint16, searchPath string) {
 		mux := http.NewServeMux()
 		mux.HandleFunc(searchPath, c.searchText)
 		addr := fmt.Sprintf(":%d", port)
-		log.Println("unilog Client: ready to start http server:", addr)
+		log.Println("unilog Client: ready to start http server, addr: []", addr)
 		err := http.ListenAndServe(addr, mux)
 		if err != nil {
 			log.Println("ListenAndServe error:", err.Error())

@@ -37,6 +37,18 @@ func clientRegister() {
 	}
 	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
 	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
+
+	// use http to search, param is kw and files, multi kw and multi files are supported
+	// cli.RegisterWithHTTP(8097, "/search") // uncomment this line if you want to use http to search
+	/*
+		when you use http to search, you can use curl to test, or open the url directly in the browser
+		curl --location --request GET 'http://127.0.0.1:8097/search?kw=outstanding&kw=associated'
+			outputs:
+			<<<<<< --------------------10.236.148.250 log2.txt -------------------- >>>>>>
+		(vi) To be directly or tangibly associated with events or living traditions, with ideas, or with beliefs, with artistic and literary works of outstanding universal significance. (The Committee considers that this criterion should preferably be used in conjunction with other criteria)
+
+	*/
+	// curl --location --request GET 'http://127.0.0.1:8097/search?kw=outstanding'
 }
 
 // serverStart start server.
