@@ -1,15 +1,13 @@
 package main
 
 import (
-	"encoding/json"
-	"github.com/vito-go/fsearch"
+	"github.com/vito-go/fsearch/unilog"
+	"github.com/vito-go/fsearch/util"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"time"
 )
 
 func init() {
@@ -21,91 +19,36 @@ func init() {
 	}
 }
 
-type clusterNode struct {
-	AppName      string              `json:"appName,omitempty"`
-	Hosts        []string            `json:"hosts,omitempty"`
-	HostFilesMap map[string][]string `json:"hostFilesMap,omitempty"`
+func main() {
+	clientRegister()
+	serverStart()
 }
 
-func main() {
-	search, err := fsearch.NewDirSearch("../testdata/")
+// clientRegister register client to center
+// it's async, so you can start this first. no need to use goroutine
+// if connection failed, it will retry every 10 seconds
+func clientRegister() {
+	appName := "demoApp"
+	searchDir := "../testdata"         // can be any directory, especially for logs/
+	hostName, _ := util.GetPrivateIP() //hostName can be any flag, but using ip is better
+	cli, err := unilog.NewClient(searchDir, appName, hostName)
 	if err != nil {
 		panic(err)
 	}
-	const defaultMaxLines = 50
-	mux := http.NewServeMux()
-	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "*")
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
-			return
-		}
-		query := r.URL.Query()
-		kws := query["kw"]
-		maxLines, err := strconv.Atoi(query.Get("maxLines"))
-		if err != nil {
-			maxLines = defaultMaxLines
-		}
-		lines := search.SearchFromEnd(maxLines, kws...)
+	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
+	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
+}
 
-		for _, line := range lines {
-			_, _ = w.Write([]byte(line + "\n"))
-		}
-	})
-	mux.HandleFunc("/clusterNodes", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "*")
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
-			return
-		}
-		clusterNodes := []clusterNode{
-			{
-				AppName: "myapp-chat-api-go",
-				Hosts:   []string{"127.0.0.1:8181", "127.0.0.1:8182", "127.0.0.1:8183"},
-				HostFilesMap: map[string][]string{
-					"127.0.0.1:8181": {"myapp-api-user.log", "myapp-api-user1.log", "myapp-api-user2.log"},
-					"127.0.0.1:8182": {"newsapp-chat-api-go-2023-08-25T12-53-45.285.log", "newsapp-chat-api-go-2023-08-25T12-53-45.265.log", "newsapp-chat-api-go-2023-08-25T22-53-45.285.log"},
-					"127.0.0.1:8183": {"newsapp-chat-user-go-2023-08-25T12-53-45.285.log", "newsapp-chat-user-go-2023-08-25T12-53-45.265.log", "newsapp-chat-user-go-2023-08-25T22-53-45.285.log"},
-				},
-			},
-			{
-				AppName: "myapp-chat-api-go1",
-				Hosts:   []string{"10.158.13.6:7181", "10.158.13.6:7185", "10.158.13.6:7187"},
-				HostFilesMap: map[string][]string{
-					"10.158.13.6:7181": {"myapp-api-user.log", "myapp-api-user1.log", "myapp-api-user2.log"},
-					"10.158.13.6:7185": {"newsapp-chat-api-go-2023-08-25T12-53-45.285.log", "newsapp-chat-api-go-2023-08-25T12-53-45.265.log", "newsapp-chat-api-go-2023-08-25T22-53-45.285.log"},
-					"10.158.13.6:7187": {"newsapp-chat-user-go-2023-08-25T12-53-45.285.log", "newsapp-chat-user-go-2023-08-25T12-53-45.265.log", "newsapp-chat-user-go-2023-08-25T22-53-45.285.log"},
-				},
-			},
-			{
-				AppName: "myapp-chat-api-go3",
-				Hosts:   []string{"10.158.13.6:9181", "10.158.13.6:9185", "10.158.13.6:9187"},
-				HostFilesMap: map[string][]string{
-					"10.158.13.6:9181": {"myapp-api-user.log", "myapp-api-user1.log", "myapp-api-user2.log"},
-					"10.158.13.6:9185": {"newsapp-chat-api-go-2023-08-25T12-53-45.285.log", "newsapp-chat-api-go-2023-08-25T12-53-45.265.log", "newsapp-chat-api-go-2023-08-25T22-53-45.285.log"},
-					"10.158.13.6:9187": {"newsapp-chat-user-go-2023-08-25T12-53-45.285.log", "newsapp-chat-user-go-2023-08-25T12-53-45.265.log", "newsapp-chat-user-go-2023-08-25T22-53-45.285.log"},
-				},
-			},
-		}
-		b, _ := json.Marshal(map[string]interface{}{
-			"data": map[string]interface{}{
-				"items": clusterNodes,
-			},
-			"code": 0,
-		})
-		w.Write(b)
-	})
-	log.Println("start server at :8081")
-	err = http.ListenAndServe(":8081", mux)
-	if err != nil {
-		panic(err)
-	}
-	// curl --location --request GET '127.0.0.1:8081/search?kw=criteria&maxLines=5'
-	// Output:
-	// (vi) To be directly or tangibly associated with events or living traditions, with ideas, or with beliefs, with artistic and literary works of outstanding universal significance. (The Committee considers that this criterion should preferably be used in conjunction with other criteria)
-	// For cultural sites, the following six criteria can apply:
+// serverStart start server.
+func serverStart() {
+	registerPath := "/ws"   // the path that client register to: ws://127.0.0.1:9097/ws
+	searchPath := "/search" // api for search
+	server := unilog.NewServer(searchPath, "/", registerPath, 9097)
+	log.Println("server start: 9097")
+	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
+	//unzip web.zip
+	// the staticDir is that you download and unzip above, more details in README.md
+	staticDir := "web"
+	staticWebFile := http.Dir(staticDir)
+	log.Fatalln(server.Start(staticWebFile))
 }
