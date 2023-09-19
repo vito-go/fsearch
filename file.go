@@ -149,6 +149,7 @@ func (t *FileSearch) SearchFromEnd(maxLines int, kws ...string) []string {
 	return result
 }
 func (t *FileSearch) detectFileSize() {
+	defer t.Close()
 	var retry = 0
 	log.Println("fsearch: start detectFileSize", t.fileName)
 	for {
@@ -160,11 +161,12 @@ func (t *FileSearch) detectFileSize() {
 		fileInfo, err := os.Stat(t.fileName)
 		if err != nil {
 			log.Println(err)
-			if retry > 5 {
+			if retry > 3 {
 				return
 			}
 			time.Sleep(time.Second * 10)
 			retry++
+			continue
 		}
 		retry = 0
 		size := fileInfo.Size()

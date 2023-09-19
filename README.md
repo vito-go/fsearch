@@ -81,3 +81,5 @@ http://vitogo.tpddns.cn:9097
 
 ## TODO
 - auth for each app
+## FIXME 
+- it will panic when file was deleted
