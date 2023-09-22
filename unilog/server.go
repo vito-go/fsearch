@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,11 +129,20 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 // NewServer 创建一个新的unilog server
 // searchPath: 搜索路径 例如: /search
 // indexPath: 静态文件路径 例如: /index/
-// configPath: 配置文件，注意不能有indexPath的前缀 例如: /_internal/config
+// configPath: 根据searchPath计算出， 例如: /user/_internal/config
 // wsRegisterPath: websocket注册路径 例如: /ws
-func NewServer(searchPath string, configPath string, indexPath string, registerPath string) *Server {
+func NewServer(searchPath string, indexPath string, registerPath string) *Server {
 	searchPathHttp := searchPath
 	searchPathWs := filepath.Join(searchPath, "ws")
+	var configPath string
+	if searchPath == "/" {
+		configPath = "/_internal/config"
+	} else {
+		temp := strings.TrimSuffix(searchPath, "/")
+		// change /user/home/  to /user/_internal/config
+		configPath = temp[:strings.LastIndex(temp, "/")] + "/_internal/config"
+	}
+
 	return &Server{searchPathHTTP: searchPathHttp,
 		indexPath:           indexPath,
 		searchPathWS:        searchPathWs,
