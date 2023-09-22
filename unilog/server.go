@@ -128,8 +128,9 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 // NewServer 创建一个新的unilog server
 // searchPath: 搜索路径 例如: /search
 // indexPath: 静态文件路径 例如: /index/
+// configPath: 配置文件，注意不能有indexPath的前缀 例如: /_internal/config
 // wsRegisterPath: websocket注册路径 例如: /ws
-func NewServer(searchPath string, indexPath string, registerPath string) *Server {
+func NewServer(searchPath string, configPath string, indexPath string, registerPath string) *Server {
 	searchPathHttp := searchPath
 	searchPathWs := filepath.Join(searchPath, "ws")
 	return &Server{searchPathHTTP: searchPathHttp,
@@ -137,7 +138,7 @@ func NewServer(searchPath string, indexPath string, registerPath string) *Server
 		searchPathWS:        searchPathWs,
 		wsRegisterPath:      registerPath,
 		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
-		configPath:          filepath.Join(indexPath, "/_internal/config"),
+		configPath:          configPath,
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
 		appHostGlobal:       appHost{mux: sync.RWMutex{}, appHostMap: make(map[string]map[uint64]*NodeInfo)},
 	}
