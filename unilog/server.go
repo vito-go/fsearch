@@ -3,6 +3,7 @@ package unilog
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 	"io"
 	"log"
@@ -19,8 +20,8 @@ type Server struct {
 	searchPathHTTP string
 	searchPathWS   string
 	indexPath      string
+	configPath     string
 	wsRegisterPath string
-	port           uint16
 
 	appHostGlobal       appHost
 	searchResultSyncMap *searchResultSyncMap
@@ -128,29 +129,55 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 // searchPath: 搜索路径 例如: /search
 // indexPath: 静态文件路径 例如: /index/
 // wsRegisterPath: websocket注册路径 例如: /ws
-func NewServer(searchPath string, indexPath string, registerPath string, port uint16) *Server {
+func NewServer(searchPath string, indexPath string, registerPath string) *Server {
 	searchPathHttp := searchPath
 	searchPathWs := filepath.Join(searchPath, "ws")
 	return &Server{searchPathHTTP: searchPathHttp,
-		indexPath:      indexPath,
-		searchPathWS:   searchPathWs,
-		wsRegisterPath: registerPath,
-		wsSyncMap:      &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
-		port:           port,
-
+		indexPath:           indexPath,
+		searchPathWS:        searchPathWs,
+		wsRegisterPath:      registerPath,
+		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
+		configPath:          filepath.Join(indexPath, "/_internal/config"),
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
 		appHostGlobal:       appHost{mux: sync.RWMutex{}, appHostMap: make(map[string]map[uint64]*NodeInfo)},
 	}
 }
 
-func (s *Server) Start(fileSystem http.FileSystem) error {
+func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
+	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
+	mux.HandleFunc(s.configPath, s.configHandler)
+	mux.Handle(s.indexPath, http.FileServer(fileSystem))
+	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+}
+
+func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
+	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
+		s.searchTextHTTP(ctx.Writer, ctx.Request)
+	})
+	mux.GET(s.searchPathWS, func(ctx *gin.Context) {
+		websocket.Handler(s.searchTextWS).ServeHTTP(ctx.Writer, ctx.Request)
+	})
+
+	mux.GET(s.configPath, func(ctx *gin.Context) {
+		s.configHandler(ctx.Writer, ctx.Request)
+	})
+
+	mux.StaticFS(s.indexPath, fileSystem)
+	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
+		websocket.Handler(s.registerWS).ServeHTTP(ctx.Writer, ctx.Request)
+	})
+}
+
+// StartListenAndServe addr for example :8080
+func (s *Server) StartListenAndServe(fileSystem http.FileSystem, addr string) error {
 	mux := http.ServeMux{}
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
 	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
-	mux.HandleFunc("/_internal/config", s.configHandler)
+	mux.HandleFunc(s.configPath, s.configHandler)
 	mux.Handle(s.indexPath, http.FileServer(fileSystem))
 	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
-	return http.ListenAndServe(fmt.Sprintf(":%d", s.port), &mux)
+	return http.ListenAndServe(addr, &mux)
 }
 
 var nodeIdGen uint64 = 10000
@@ -236,6 +263,7 @@ type webConfigData struct {
 	ClusterNodes   []ClusterNode `json:"clusterNodes,omitempty"`
 	SearchPathHTTP string        `json:"searchPathHTTP,omitempty"`
 	SearchPathWS   string        `json:"searchPathWS,omitempty"`
+	ConfigPath     string        `json:"configPath,omitempty"`
 }
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +281,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			ClusterNodes:   s.appHostGlobal.GetClusterNodes(),
 			SearchPathHTTP: s.searchPathHTTP,
 			SearchPathWS:   s.searchPathWS,
+			ConfigPath:     s.configPath,
 		},
 	}
 	w.Write(respBody.ToBytes())
