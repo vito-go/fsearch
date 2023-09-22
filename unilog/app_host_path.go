@@ -103,5 +103,9 @@ func (a *appHost) GetClusterNodes() []ClusterNode {
 		}
 		items = append(items, clusterNode)
 	}
+	// sort by appName
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].AppName < items[j].AppName
+	})
 	return items
 }

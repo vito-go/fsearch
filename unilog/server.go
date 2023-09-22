@@ -274,7 +274,6 @@ type webConfigData struct {
 	ClusterNodes   []ClusterNode `json:"clusterNodes,omitempty"`
 	SearchPathHTTP string        `json:"searchPathHTTP,omitempty"`
 	SearchPathWS   string        `json:"searchPathWS,omitempty"`
-	ConfigPath     string        `json:"configPath,omitempty"`
 }
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +291,6 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			ClusterNodes:   s.appHostGlobal.GetClusterNodes(),
 			SearchPathHTTP: s.searchPathHTTP,
 			SearchPathWS:   s.searchPathWS,
-			ConfigPath:     s.configPath,
 		},
 	}
 	w.Write(respBody.ToBytes())
