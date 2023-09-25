@@ -168,7 +168,7 @@ func (f *DirSearch) SearchFromEndAndWrite(writer io.Writer, hostName string, max
 			continue
 		}
 		writer.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, filepath.Base(search.fileName))))
-		_, _ = writer.Write([]byte(strings.Join(lines, "\n") + "\n\n"))
+		_, _ = writer.Write([]byte(strings.Join(lines, "\n\n") + "\n\n"))
 	}
 	return
 }
