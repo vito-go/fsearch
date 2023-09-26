@@ -20,6 +20,7 @@ import (
 type Server struct {
 	searchPathHTTP string
 	searchPathWS   string
+	searchPathSSE  string
 	indexPath      string
 	configPath     string
 	wsRegisterPath string
@@ -27,51 +28,6 @@ type Server struct {
 	appHostGlobal       appHost
 	searchResultSyncMap *searchResultSyncMap
 	wsSyncMap           *wsSyncMap
-}
-type resultChannel struct {
-	mux             sync.RWMutex
-	requestIdUidMap map[int64]int64          // 多个requestId对应一个uid
-	dataMap         map[int64]chan *sendData // key: uid
-}
-
-func (r *resultChannel) Set(uid int64, requestIds []int64) {
-	r.mux.Lock()
-	defer r.mux.Unlock()
-	ch := make(chan *sendData, 32)
-	for _, id := range requestIds {
-		r.requestIdUidMap[id] = uid
-	}
-	r.dataMap[uid] = ch
-}
-
-func (r *resultChannel) Del(uid int64, requestIds []int64) {
-	r.mux.Lock()
-	defer r.mux.Unlock()
-	delete(r.dataMap, uid)
-
-	for _, id := range requestIds {
-		delete(r.requestIdUidMap, id)
-	}
-}
-func (r *resultChannel) GetByRequestId(reqId int64) (chan *sendData, bool) {
-	r.mux.RLock()
-	defer r.mux.RUnlock()
-	uid, ok := r.requestIdUidMap[reqId]
-	if !ok {
-		return nil, false
-	}
-	if ch, ok := r.dataMap[uid]; ok {
-		return ch, true
-	}
-	return nil, false
-}
-func (r *resultChannel) Get(uid int64) (chan *sendData, bool) {
-	r.mux.RLock()
-	defer r.mux.RUnlock()
-	if ch, ok := r.dataMap[uid]; ok {
-		return ch, true
-	}
-	return nil, false
 }
 
 type searchResultSyncMap struct {
@@ -134,6 +90,7 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 func NewServer(searchPath string, indexPath string, registerPath string) *Server {
 	searchPathHttp := searchPath
 	searchPathWs := filepath.Join(searchPath, "ws")
+	searchPathSSE := filepath.Join(searchPath, "sse")
 	var configPath string
 	if searchPath == "/" {
 		configPath = "/_internal/config"
@@ -146,6 +103,7 @@ func NewServer(searchPath string, indexPath string, registerPath string) *Server
 	return &Server{searchPathHTTP: searchPathHttp,
 		indexPath:           indexPath,
 		searchPathWS:        searchPathWs,
+		searchPathSSE:       searchPathSSE,
 		wsRegisterPath:      registerPath,
 		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
 		configPath:          configPath,
@@ -156,6 +114,7 @@ func NewServer(searchPath string, indexPath string, registerPath string) *Server
 
 func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
 	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
 	mux.HandleFunc(s.configPath, s.configHandler)
 	mux.Handle(s.indexPath, http.FileServer(fileSystem))
@@ -168,6 +127,9 @@ func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 	})
 	mux.GET(s.searchPathWS, func(ctx *gin.Context) {
 		websocket.Handler(s.searchTextWS).ServeHTTP(ctx.Writer, ctx.Request)
+	})
+	mux.GET(s.searchPathSSE, func(ctx *gin.Context) {
+		s.searchTextSSE(ctx.Writer, ctx.Request)
 	})
 
 	mux.GET(s.configPath, func(ctx *gin.Context) {
@@ -184,6 +146,7 @@ func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 func (s *Server) StartListenAndServe(fileSystem http.FileSystem, addr string) error {
 	mux := http.ServeMux{}
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
 	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
 	mux.HandleFunc(s.configPath, s.configHandler)
 	mux.Handle(s.indexPath, http.FileServer(fileSystem))
@@ -274,6 +237,7 @@ type webConfigData struct {
 	ClusterNodes   []ClusterNode `json:"clusterNodes,omitempty"`
 	SearchPathHTTP string        `json:"searchPathHTTP,omitempty"`
 	SearchPathWS   string        `json:"searchPathWS,omitempty"`
+	SearchPathSSE  string        `json:"searchPathSSE,omitempty"`
 }
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +255,7 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 			ClusterNodes:   s.appHostGlobal.GetClusterNodes(),
 			SearchPathHTTP: s.searchPathHTTP,
 			SearchPathWS:   s.searchPathWS,
+			SearchPathSSE:  s.searchPathSSE,
 		},
 	}
 	w.Write(respBody.ToBytes())
@@ -298,12 +263,27 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) searchTextWS(ws *websocket.Conn) {
 	defer ws.Close()
-	s.writeWith(ws, ws.Request())
+	s.writeWith(ws, false, ws.Request())
 }
 func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
-	s.writeWith(w, r)
+	s.writeWith(w, false, r)
 }
-func (s *Server) writeWith(w io.Writer, r *http.Request) {
+func (s *Server) searchTextSSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream;charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	s.writeWith(w, true, r)
+}
+func (s *Server) writeWith(w io.Writer, sse bool, r *http.Request) {
+	if w, ok := w.(http.ResponseWriter); ok {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+			return
+		}
+	}
 	query := r.URL.Query()
 	appName := query.Get("appName")
 	var nodeId uint64
@@ -340,9 +320,9 @@ func (s *Server) writeWith(w io.Writer, r *http.Request) {
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
-	s.write(w, appName, hostName, nodeId, int(maxLines), files, kws...)
+	s.write(w, sse, appName, hostName, nodeId, int(maxLines), files, kws...)
 }
-func (s *Server) write(w io.Writer, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
+func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
 	if len(kws) == 0 {
 		return
 	}
@@ -452,6 +432,23 @@ func (s *Server) write(w io.Writer, appName, hostName string, nodeId uint64, max
 		if data.Content == "" {
 			continue
 		}
+		if sse {
+			lines := strings.Split(data.Content, "\n")
+			for _, line := range lines {
+				if line == "" {
+					line = "\n"
+				}
+				_, err := w.Write([]byte(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", time.Now().UnixNano(), "", line)))
+				if err != nil {
+					return
+				}
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+			}
+			continue
+		}
+
 		if _, err := w.Write([]byte(data.Content)); err != nil {
 			return
 		}

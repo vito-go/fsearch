@@ -55,12 +55,12 @@ func clientRegister() {
 func serverStart() {
 	registerPath := "/ws"   // the path that client register to: ws://127.0.0.1:9097/ws
 	searchPath := "/search" // api for search
-	server := unilog.NewServer(searchPath, "/", registerPath, 9097)
+	server := unilog.NewServer(searchPath, "/", registerPath)
 	log.Println("server start: 9097")
 	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
 	//unzip web.zip
 	// the staticDir is that you download and unzip above, more details in README.md
 	staticDir := "web"
 	staticWebFile := http.Dir(staticDir)
-	log.Fatalln(server.Start(staticWebFile))
+	log.Fatalln(server.StartListenAndServe(staticWebFile, ":9097"))
 }

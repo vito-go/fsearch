@@ -121,10 +121,9 @@ func (f *DirSearch) SearchFromEnd(maxLines int, kws ...string) []string {
 	}
 	return result
 }
-func (f *DirSearch) SearchFromEndWithFiles(maxLines int, fileMap map[string]bool, kws ...string) []string {
+func (f *DirSearch) SearchFromEndWithFiles(hostName string, maxLines int, fileMap map[string]bool, kws ...string) []string {
 	f.rwMutex.RLock()
 	defer f.rwMutex.RUnlock()
-	var result []string
 	var searches []*FileSearch
 	for _, search := range f.fileMap {
 		if len(fileMap) > 0 {
@@ -138,9 +137,12 @@ func (f *DirSearch) SearchFromEndWithFiles(maxLines int, fileMap map[string]bool
 	sort.Slice(searches, func(i, j int) bool {
 		return searches[i].updateTime.After(searches[j].updateTime)
 	})
+	result := make([]string, 0, 512)
 	for _, search := range searches {
+		result = append(result, fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>", hostName, filepath.Base(search.fileName)))
 		lines := search.SearchFromEnd(maxLines, kws...)
 		result = append(result, lines...)
+		result = append(result, "\n")
 	}
 	return result
 }
