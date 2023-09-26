@@ -286,6 +286,13 @@ func (s *Server) writeWith(w io.Writer, sse bool, r *http.Request) {
 	}
 	query := r.URL.Query()
 	appName := query.Get("appName")
+	if appName == "" {
+		if w, ok := w.(http.ResponseWriter); ok {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		w.Write(getSSELineBytes(time.Now().UnixNano(), fmt.Sprintf("no appName")))
+		return
+	}
 	var nodeId uint64
 	var err error
 	if query.Get("nodeId") == "" {
@@ -296,19 +303,12 @@ func (s *Server) writeWith(w io.Writer, sse bool, r *http.Request) {
 			if responseWriter, ok := w.(http.ResponseWriter); ok {
 				responseWriter.WriteHeader(http.StatusBadRequest)
 			}
-			w.Write([]byte("nodeId error"))
+			w.Write(getSSELineBytes(time.Now().UnixNano(), fmt.Sprintf("nodeId error: %s", err.Error())))
 			return
 		}
 		nodeId = uint64(uniqueIdInt)
 	}
-	//path := query.Get("path")
-	if appName == "" {
-		if responseWriter, ok := w.(http.ResponseWriter); ok {
-			responseWriter.WriteHeader(http.StatusBadRequest)
-		}
-		w.Write([]byte("no appName"))
-		return
-	}
+
 	kws := query["kw"]
 	files := query["files"]
 	hostName := query.Get("hostName")
@@ -332,7 +332,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 		if responseWriter, ok := w.(http.ResponseWriter); ok {
 			responseWriter.WriteHeader(http.StatusBadRequest)
 		}
-		w.Write([]byte("no HostName"))
+		w.Write(getSSELineBytes(time.Now().UnixNano(), fmt.Sprintf("no HostName, appName: %s", appName)))
 		return
 	}
 	if nodeId > 0 {
@@ -340,10 +340,10 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			if conn, ok := s.wsSyncMap.Get(node.NodeId); ok {
 				conns = append(conns, conn)
 			} else {
-				if responseWriter, ok := w.(http.ResponseWriter); ok {
-					responseWriter.WriteHeader(http.StatusBadRequest)
+				if w, ok := w.(http.ResponseWriter); ok {
+					w.WriteHeader(http.StatusBadRequest)
 				}
-				w.Write([]byte(fmt.Sprintf("node not found by nodeId: %d", node.NodeId)))
+				w.Write(getSSELineBytes(time.Now().UnixNano(), fmt.Sprintf("node not found by nodeId: %d", node.NodeId)))
 				return
 			}
 		}
@@ -358,8 +358,8 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			}
 		}
 	} else {
-		uids := s.appHostGlobal.GetHostNodeUniqueIds(appName)
-		for _, uid := range uids {
+		ids := s.appHostGlobal.GetHostNodeUniqueIds(appName)
+		for _, uid := range ids {
 			if conn, ok := s.wsSyncMap.Get(uid); ok {
 				conns = append(conns, conn)
 			}
@@ -369,7 +369,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 		if responseWriter, ok := w.(http.ResponseWriter); ok {
 			responseWriter.WriteHeader(http.StatusBadRequest)
 		}
-		w.Write([]byte("no node"))
+		w.Write(getSSELineBytes(time.Now().UnixNano(), fmt.Sprintf("no node, appName: %s", appName)))
 		return
 	}
 	cli := http.Client{}
@@ -436,7 +436,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			lines := strings.Split(data.Content, "\n")
 			for _, line := range lines {
 				if line == "" {
-					line = "\n"
+					continue
 				}
 				_, err := w.Write([]byte(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", time.Now().UnixNano(), "", line)))
 				if err != nil {
@@ -453,8 +453,10 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			return
 		}
 		if flusher, ok := w.(http.Flusher); ok {
-			log.Println("flush")
 			flusher.Flush()
 		}
 	}
+}
+func getSSELineBytes(id int64, line string) []byte {
+	return []byte(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", id, "", line))
 }
