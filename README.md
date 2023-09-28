@@ -28,11 +28,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	server := unilog.NewServer("/search", "/", "/ws", 9097)
+	server := unilog.NewServer("/search", "/", "/ws")
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir(filepath.Join(homeDir, "go/src/github.com/vito-go/fsearch_flutter/build/web"))
-	server.Start(staticWebFile)
+	server.StartListenAndServe(staticWebFile,":9097")
 }
 
 ```
