@@ -73,7 +73,6 @@ func main() {
 
 ## Demo
 
-http://vitogo.tpddns.cn:9097
 
 <img src="./fsearch.png" />
 <img src="./fsearch1.png" />
