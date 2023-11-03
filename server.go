@@ -1,4 +1,4 @@
-package unilog
+package fsearch
 
 import (
 	"encoding/json"
@@ -18,16 +18,88 @@ import (
 )
 
 type Server struct {
-	searchPathHTTP string
-	searchPathWS   string
-	searchPathSSE  string
-	indexPath      string
-	configPath     string
-	wsRegisterPath string
-
-	appHostGlobal       appHost
+	searchPathHTTP      string
+	searchPathSSE       string
+	indexPath           string
+	configPath          string
+	wsRegisterPath      string
+	appHostData         appHostData
 	searchResultSyncMap *searchResultSyncMap
 	wsSyncMap           *wsSyncMap
+}
+
+// NewServer create a new unilog server. searchPath is the search path. indexPath is the static file path.
+// configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
+// for example:
+//
+// searchPath: /search
+//
+// indexPath: /index/
+//
+// configPath: /user/_internal/config
+//
+// wsRegisterPath: /ws
+func NewServer(searchPath string, indexPath string, registerPath string) *Server {
+	searchPathHttp := searchPath
+	searchPathSSE := filepath.Join(searchPath, "sse")
+	var configPath string
+	if searchPath == "/" {
+		configPath = "/_internal/config"
+	} else {
+		temp := strings.TrimSuffix(searchPath, "/")
+		// change /user/home/  to /user/_internal/config
+		configPath = temp[:strings.LastIndex(temp, "/")] + "/_internal/config"
+	}
+
+	return &Server{searchPathHTTP: searchPathHttp,
+		indexPath:           indexPath,
+		searchPathSSE:       searchPathSSE,
+		wsRegisterPath:      registerPath,
+		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
+		configPath:          configPath,
+		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
+		appHostData:         appHostData{mux: sync.RWMutex{}, data: make(map[string]map[uint64]*NodeInfo)},
+	}
+}
+
+// RegisterWithMux register to mux. fileSystem is the static file system.
+func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
+	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
+	mux.HandleFunc(s.configPath, s.configHandler)
+	mux.Handle(s.indexPath, http.FileServer(fileSystem))
+	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+}
+
+// RegisterWithGin register to gin. fileSystem is the static file system.
+func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
+	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
+		s.searchTextHTTP(ctx.Writer, ctx.Request)
+	})
+	mux.GET(s.searchPathSSE, func(ctx *gin.Context) {
+		s.searchTextSSE(ctx.Writer, ctx.Request)
+	})
+
+	mux.GET(s.configPath, func(ctx *gin.Context) {
+		s.configHandler(ctx.Writer, ctx.Request)
+	})
+
+	mux.StaticFS(s.indexPath, fileSystem)
+	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
+		websocket.Handler(s.registerWS).ServeHTTP(ctx.Writer, ctx.Request)
+	})
+}
+
+// StartListenAndServe start server. addr is the listen address, for example: :9097
+// fileSystem is the static file system.
+func (s *Server) StartListenAndServe(fileSystem http.FileSystem, addr string) error {
+	mux := http.ServeMux{}
+	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
+	mux.HandleFunc(s.configPath, s.configHandler)
+	mux.Handle(s.indexPath, http.FileServer(fileSystem))
+	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+	return http.ListenAndServe(addr, &mux)
 }
 
 type searchResultSyncMap struct {
@@ -82,78 +154,6 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 	return nil, false
 }
 
-// NewServer 创建一个新的unilog server
-// searchPath: 搜索路径 例如: /search
-// indexPath: 静态文件路径 例如: /index/
-// configPath: 根据searchPath计算出， 例如: /user/_internal/config
-// wsRegisterPath: websocket注册路径 例如: /ws
-func NewServer(searchPath string, indexPath string, registerPath string) *Server {
-	searchPathHttp := searchPath
-	searchPathWs := filepath.Join(searchPath, "ws")
-	searchPathSSE := filepath.Join(searchPath, "sse")
-	var configPath string
-	if searchPath == "/" {
-		configPath = "/_internal/config"
-	} else {
-		temp := strings.TrimSuffix(searchPath, "/")
-		// change /user/home/  to /user/_internal/config
-		configPath = temp[:strings.LastIndex(temp, "/")] + "/_internal/config"
-	}
-
-	return &Server{searchPathHTTP: searchPathHttp,
-		indexPath:           indexPath,
-		searchPathWS:        searchPathWs,
-		searchPathSSE:       searchPathSSE,
-		wsRegisterPath:      registerPath,
-		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
-		configPath:          configPath,
-		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
-		appHostGlobal:       appHost{mux: sync.RWMutex{}, appHostMap: make(map[string]map[uint64]*NodeInfo)},
-	}
-}
-
-func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
-	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
-	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
-	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
-	mux.HandleFunc(s.configPath, s.configHandler)
-	mux.Handle(s.indexPath, http.FileServer(fileSystem))
-	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
-}
-
-func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
-	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
-		s.searchTextHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.GET(s.searchPathWS, func(ctx *gin.Context) {
-		websocket.Handler(s.searchTextWS).ServeHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.GET(s.searchPathSSE, func(ctx *gin.Context) {
-		s.searchTextSSE(ctx.Writer, ctx.Request)
-	})
-
-	mux.GET(s.configPath, func(ctx *gin.Context) {
-		s.configHandler(ctx.Writer, ctx.Request)
-	})
-
-	mux.StaticFS(s.indexPath, fileSystem)
-	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
-		websocket.Handler(s.registerWS).ServeHTTP(ctx.Writer, ctx.Request)
-	})
-}
-
-// StartListenAndServe addr for example :8080
-func (s *Server) StartListenAndServe(fileSystem http.FileSystem, addr string) error {
-	mux := http.ServeMux{}
-	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
-	mux.HandleFunc(s.searchPathSSE, s.searchTextSSE)
-	mux.Handle(s.searchPathWS, websocket.Handler(s.searchTextWS))
-	mux.HandleFunc(s.configPath, s.configHandler)
-	mux.Handle(s.indexPath, http.FileServer(fileSystem))
-	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
-	return http.ListenAndServe(addr, &mux)
-}
-
 var nodeIdGen uint64 = 10000
 
 func (s *Server) registerWS(ws *websocket.Conn) {
@@ -172,23 +172,21 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		log.Printf("unilog: client protocol check error. it's should be `%s` ,but it's `%s`\n", protocol, buf.Scheme())
 		return
 	}
-	if !buf.Check00() {
+	if !buf.CheckReserved() {
 		log.Printf("unilog: client protocol error. it's should be `00` ,but it's `%d`\n", buf[6:8])
 		return
 	}
 	appName := buf.AppName()
 	// please attention: ws.Request().RemoteAddr is not the real remote addr.
 	// todo: and here is not support ipv6 and not support proxy
-	//nodeId:=buf.NodeId()
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
-	if s.appHostGlobal.ExistsBy(appName, nodeId) {
+	if s.appHostData.ExistsBy(appName, nodeId) {
 		log.Println("unilog : client already exists")
 		return
 	}
 	hostName := buf.HostName()
 	s.wsSyncMap.Set(nodeId, ws)
-
-	defer s.appHostGlobal.Del(appName, nodeId)
+	defer s.appHostData.Del(appName, nodeId)
 	defer s.wsSyncMap.Del(nodeId)
 	for {
 		var sendBytes []byte
@@ -213,7 +211,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 			}
 			sort.Strings(files)
 			log.Printf("client regiter: appName: %s, NodeId:%d HostName: %s Files: %v", appName, nodeId, hostName, files)
-			s.appHostGlobal.Set(appName, nodeId, hostName, files)
+			s.appHostData.Set(appName, nodeId, hostName, files)
 		case contentTypeSearchResult:
 			dataCh, ok := s.searchResultSyncMap.Get(data.RequestId)
 			if !ok {
@@ -236,11 +234,11 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 type webConfigData struct {
 	ClusterNodes   []ClusterNode `json:"clusterNodes,omitempty"`
 	SearchPathHTTP string        `json:"searchPathHTTP,omitempty"`
-	SearchPathWS   string        `json:"searchPathWS,omitempty"`
 	SearchPathSSE  string        `json:"searchPathSSE,omitempty"`
 }
 
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
+	// to avoid CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
@@ -248,19 +246,21 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
 		return
 	}
-	respBody := RespBody{
+	body := respBody{
 		Code:    0,
 		Message: "",
 		Data: webConfigData{
-			ClusterNodes:   s.appHostGlobal.GetClusterNodes(),
+			ClusterNodes:   s.appHostData.GetClusterNodes(),
 			SearchPathHTTP: s.searchPathHTTP,
-			SearchPathWS:   s.searchPathWS,
 			SearchPathSSE:  s.searchPathSSE,
 		},
 	}
-	w.Write(respBody.ToBytes())
+	w.Header().Set("Content-Type", "application/json;charset=utf-8")
+	w.Write(body.ToBytes())
 }
 
+// searchTextWS .
+// Deprecated: use searchTextHTTP or searchTextSSE instead
 func (s *Server) searchTextWS(ws *websocket.Conn) {
 	defer ws.Close()
 	s.writeWith(ws, false, ws.Request())
@@ -327,7 +327,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 		return
 	}
 	var conns []*websocket.Conn
-	nodeInfos := s.appHostGlobal.GetHostNodeInfoMap(appName)
+	nodeInfos := s.appHostData.GetHostNodeInfoMap(appName)
 	if len(nodeInfos) == 0 {
 		if responseWriter, ok := w.(http.ResponseWriter); ok {
 			responseWriter.WriteHeader(http.StatusBadRequest)
@@ -348,7 +348,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			}
 		}
 	} else if hostName != "" {
-		infoMap := s.appHostGlobal.GetHostNodeInfoMap(appName)
+		infoMap := s.appHostData.GetHostNodeInfoMap(appName)
 		for _, info := range infoMap {
 			if info.HostName == hostName {
 				if conn, ok := s.wsSyncMap.Get(info.NodeId); ok {
@@ -358,7 +358,7 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 			}
 		}
 	} else {
-		ids := s.appHostGlobal.GetHostNodeUniqueIds(appName)
+		ids := s.appHostData.GetHostNodeUniqueIds(appName)
 		for _, uid := range ids {
 			if conn, ok := s.wsSyncMap.Get(uid); ok {
 				conns = append(conns, conn)
@@ -459,4 +459,15 @@ func (s *Server) write(w io.Writer, sse bool, appName, hostName string, nodeId u
 }
 func getSSELineBytes(id int64, line string) []byte {
 	return []byte(fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", id, "", line))
+}
+
+type respBody struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
+}
+
+func (r *respBody) ToBytes() []byte {
+	b, _ := json.Marshal(r)
+	return b
 }

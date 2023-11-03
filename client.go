@@ -1,9 +1,8 @@
-package unilog
+package fsearch
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/vito-go/fsearch"
 	"github.com/vito-go/fsearch/util"
 	"golang.org/x/net/websocket"
 	"log"
@@ -21,7 +20,7 @@ type Client struct {
 	appName  string
 	hostName string
 	once     sync.Once
-	dirGrep  *fsearch.DirGrep
+	dirGrep  *DirGrep
 }
 
 // NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
@@ -46,13 +45,12 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 		hostName: hostName,
 		appName:  appName,
 		//search:   search,
-		dirGrep: &fsearch.DirGrep{Dir: dir},
+		dirGrep: &DirGrep{Dir: dir},
 		once:    sync.Once{},
 	}, nil
 }
 
-// RegisterToCenter 用于注册服务，注册成功后，会每隔30秒检查一次files是否有变化，如果有变化，会重新注册 注册路由地址
-// export for register
+// RegisterToCenter register to center. wsAddr is the address of the center.
 func (c *Client) RegisterToCenter(wsAddr string) {
 	go c.register(wsAddr, c.appName, c.hostName)
 }
@@ -71,7 +69,8 @@ func (c *Client) RegisterWithHTTP(port uint16, searchPath string) {
 
 }
 
-// forRegister 用于注册服务，注册成功后，会每隔30秒检查一次files是否有变化，如果有变化，会重新注册 注册路由地址
+// register route address. if register success, it will check files every 30 seconds.
+// if files changed, it will send the changed files to the center.
 func (c *Client) register(addr string, appName string, hostName string) {
 	for {
 		c.forWS(addr, appName, hostName)
@@ -138,9 +137,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			filesMap[file] = struct{}{}
 		}
 		var builder strings.Builder
-		//lines := c.search.SearchFromEndAndWrite(maxLines, filesMap, param.Kws...)
-		//c.search.SearchFromEndAndWrite(&builder, hostName, maxLines, filesMap, param.Kws...)
-		c.dirGrep.SearchAndWrite(&fsearch.SearchAndWriteParam{
+		c.dirGrep.SearchAndWrite(&SearchAndWriteParam{
 			Writer:   &builder,
 			HostName: hostName,
 			MaxLines: maxLines,
@@ -212,6 +209,9 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		maxLines = defaultMaxLines
 	}
+	if maxLines <= 0 {
+		maxLines = defaultMaxLines
+	}
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
@@ -219,7 +219,7 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	for _, file := range files {
 		filesMap[file] = struct{}{}
 	}
-	c.dirGrep.SearchAndWrite(&fsearch.SearchAndWriteParam{
+	c.dirGrep.SearchAndWrite(&SearchAndWriteParam{
 		Writer:   w,
 		HostName: c.hostName,
 		MaxLines: maxLines,
@@ -237,5 +237,5 @@ func slicesEqual(a, b []string) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-const defaultMaxLines = 50
-const maxLinesLimit = 200
+const defaultMaxLines = 64
+const maxLinesLimit = 100

@@ -3,7 +3,6 @@ package fsearch
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,7 +23,6 @@ func (f *DirGrep) FileNames() []string {
 	return f.fileNamesBy(nil)
 }
 func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
-
 	dirEntries, err := os.ReadDir(f.Dir)
 	if err != nil {
 		return nil
@@ -55,8 +53,6 @@ type SearchAndWriteParam struct {
 	Kws      []string            // The kws is the keyword to be searched.
 }
 
-const defaultMaxLines = 100
-
 func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	if param == nil {
 		return
@@ -78,12 +74,11 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	fileNames := f.fileNamesBy(fileMap)
 	for _, name := range fileNames {
 		filePath := filepath.Join(f.Dir, name)
-		lines, err := grepFromFile(maxLines, filePath, kws...)
-		if err != nil {
-			log.Printf("grepFromFile error: %s\n", err.Error())
+		lines := grepFromFile(maxLines, filePath, kws...)
+		if len(lines) == 0 {
 			continue
 		}
-		_, err = w.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, name)))
+		_, err := w.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, name)))
 		if err != nil {
 			return
 		}
@@ -108,7 +103,7 @@ type linesWriter struct {
 
 func newLinesWriter(kwsFilter []string, maxLines int) *linesWriter {
 	return &linesWriter{
-		lines:     make([]string, 0, 64),
+		lines:     make([]string, 0, 16),
 		maxLines:  maxLines,
 		kwsFilter: kwsFilter,
 	}
@@ -140,13 +135,14 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func grepFromFile(maxLines int, filePath string, kws ...string) ([]string, error) {
+func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 	if len(kws) == 0 {
-		return nil, nil
+		return nil
 	}
 	// 定义命令和参数
 	// maxLines*2是为了防止grep命令在文件中找到的关键字行数不够maxLines
 	cmdStr := fmt.Sprintf("grep -m %d --color=never -a '%s' %s", maxLines*2, kws[0], filePath)
+	//cmdStr := fmt.Sprintf("grep -m %d -a '%s' %s", maxLines*2, kws[0], filePath)
 	cmd := exec.Command("bash", "-c", cmdStr)
 	var w = newLinesWriter(kws[1:], maxLines)
 	// 设置命令的标准输出和错误输出
@@ -154,7 +150,8 @@ func grepFromFile(maxLines int, filePath string, kws ...string) ([]string, error
 	cmd.Stderr = w
 	err := cmd.Run()
 	if err != nil {
-		return nil, err
+		//  exit status 1 when no match
+		return nil
 	}
-	return w.lines, nil
+	return w.lines
 }

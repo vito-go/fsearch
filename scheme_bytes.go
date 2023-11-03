@@ -1,4 +1,4 @@
-package unilog
+package fsearch
 
 import (
 	"encoding/binary"
@@ -28,13 +28,13 @@ func NewSchemaBytes(appName string, hostName string) schemaBytes {
 }
 
 func (s *schemaBytes) String() string {
-	return fmt.Sprintf("Scheme:%s, Check00:%t,AppName:%s,HostName:%s", s.Scheme(), s.Check00(), s.AppName(), s.HostName())
+	return fmt.Sprintf("Scheme:%s, CheckReserved:%t,AppName:%s,HostName:%s", s.Scheme(), s.CheckReserved(), s.AppName(), s.HostName())
 }
 func (s *schemaBytes) Scheme() string {
 	return string(s[:4])
 }
 
-func (s *schemaBytes) Check00() bool {
+func (s *schemaBytes) CheckReserved() bool {
 	return s[4] == 0 && s[5] == 0
 }
 
