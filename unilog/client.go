@@ -21,9 +21,7 @@ type Client struct {
 	appName  string
 	hostName string
 	once     sync.Once
-	//
-	search  *fsearch.DirSearch
-	dirGrep *fsearch.DirGrep
+	dirGrep  *fsearch.DirGrep
 }
 
 // NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
@@ -135,9 +133,9 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		if maxLines > maxLinesLimit {
 			maxLines = maxLinesLimit
 		}
-		filesMap := make(map[string]bool, len(param.Files))
+		filesMap := make(map[string]struct{}, len(param.Files))
 		for _, file := range param.Files {
-			filesMap[file] = true
+			filesMap[file] = struct{}{}
 		}
 		var builder strings.Builder
 		//lines := c.search.SearchFromEndAndWrite(maxLines, filesMap, param.Kws...)
@@ -217,9 +215,9 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
-	filesMap := make(map[string]bool, len(files))
+	filesMap := make(map[string]struct{}, len(files))
 	for _, file := range files {
-		filesMap[file] = true
+		filesMap[file] = struct{}{}
 	}
 	c.dirGrep.SearchAndWrite(&fsearch.SearchAndWriteParam{
 		Writer:   w,

@@ -16,10 +16,14 @@ type DirGrep struct {
 	Dir string
 }
 
+func NewDirGrep(dir string) *DirGrep {
+	return &DirGrep{Dir: dir}
+}
+
 func (f *DirGrep) FileNames() []string {
 	return f.fileNamesBy(nil)
 }
-func (f *DirGrep) fileNamesBy(fileMap map[string]bool) []string {
+func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 
 	dirEntries, err := os.ReadDir(f.Dir)
 	if err != nil {
@@ -31,11 +35,11 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]bool) []string {
 			continue
 		}
 		if len(fileMap) == 0 {
-			fileNames = append(fileNames, filepath.Join(f.Dir, entry.Name()))
+			fileNames = append(fileNames, entry.Name())
 			continue
 		}
-		if fileMap[entry.Name()] {
-			fileNames = append(fileNames, filepath.Join(f.Dir, entry.Name()))
+		if _, ok := fileMap[entry.Name()]; ok {
+			fileNames = append(fileNames, entry.Name())
 		}
 	}
 	return fileNames
@@ -44,11 +48,11 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]bool) []string {
 
 // SearchAndWriteParam is the parameter of SearchAndWrite.
 type SearchAndWriteParam struct {
-	Writer   io.Writer       // The writer is used to write the search results.
-	HostName string          // The hostName is used to distinguish the host where the file is located.
-	MaxLines int             // At most maxLines lines of output are printed for each file searched. The default is defaultMaxLines.
-	FileMap  map[string]bool // The fileMap is used to filter the files to be searched. If the fileMap is empty, all files in the directory are searched.
-	Kws      []string        // The kws is the keyword to be searched.
+	Writer   io.Writer           // The writer is used to write the search results.
+	HostName string              // The hostName is used to distinguish the host where the file is located.
+	MaxLines int                 // At most maxLines lines of output are printed for each file searched. The default is defaultMaxLines.
+	FileMap  map[string]struct{} // The fileMap is used to filter the files to be searched. If the fileMap is empty, all files in the directory are searched.
+	Kws      []string            // The kws is the keyword to be searched.
 }
 
 const defaultMaxLines = 100
@@ -142,7 +146,8 @@ func grepFromFile(maxLines int, filePath string, kws ...string) ([]string, error
 	}
 	// 定义命令和参数
 	// maxLines*2是为了防止grep命令在文件中找到的关键字行数不够maxLines
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("grep -m %d --color=never -a '%s' %s", maxLines*2, kws[0], filePath))
+	cmdStr := fmt.Sprintf("grep -m %d --color=never -a '%s' %s", maxLines*2, kws[0], filePath)
+	cmd := exec.Command("bash", "-c", cmdStr)
 	var w = newLinesWriter(kws[1:], maxLines)
 	// 设置命令的标准输出和错误输出
 	cmd.Stdout = w
