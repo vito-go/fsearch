@@ -26,7 +26,7 @@ func ExampleNewDirGrep() {
 		HostName: "",
 		MaxLines: 10,
 		FileMap:  nil,
-		Kws:      []string{"criteria"},
+		Kws:      []string{"a"},
 	})
 
 	// Output:
