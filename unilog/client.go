@@ -22,9 +22,13 @@ type Client struct {
 	hostName string
 	once     sync.Once
 	//
-	search *fsearch.DirSearch
+	search  *fsearch.DirSearch
+	dirGrep *fsearch.DirGrep
 }
 
+// NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
+// hostName is the name of the host where the application is located,
+// which is used to distinguish the host where the file is located. it can be empty.
 func NewClient(dir string, appName string, hostName string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
@@ -35,16 +39,17 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 	if hostName == "" {
 		hostName = "127.0.0.1"
 	}
-	search, err := fsearch.NewDirSearch(dir)
-	if err != nil {
-		return nil, err
-	}
+	//search, err := fsearch.NewDirSearch(dir)
+	//if err != nil {
+	//	return nil, err
+	//}
 	return &Client{
 		dir:      dir,
 		hostName: hostName,
 		appName:  appName,
-		search:   search,
-		once:     sync.Once{},
+		//search:   search,
+		dirGrep: &fsearch.DirGrep{Dir: dir},
+		once:    sync.Once{},
 	}, nil
 }
 
@@ -97,7 +102,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 	go func() {
 		var oldFiles []string
 		for {
-			newFiles := c.search.Files()
+			newFiles := c.dirGrep.FileNames()
 			if !slicesEqual(oldFiles, newFiles) {
 				log.Printf("ready to send fiels: %+v\n", newFiles)
 				newLinesBytes, _ := json.Marshal(newFiles)
@@ -136,7 +141,14 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		}
 		var builder strings.Builder
 		//lines := c.search.SearchFromEndAndWrite(maxLines, filesMap, param.Kws...)
-		c.search.SearchFromEndAndWrite(&builder, hostName, maxLines, filesMap, param.Kws...)
+		//c.search.SearchFromEndAndWrite(&builder, hostName, maxLines, filesMap, param.Kws...)
+		c.dirGrep.SearchAndWrite(&fsearch.SearchAndWriteParam{
+			Writer:   &builder,
+			HostName: hostName,
+			MaxLines: maxLines,
+			FileMap:  filesMap,
+			Kws:      param.Kws,
+		})
 		//var content string
 		//if len(lines) > 0 {
 		//	content = strings.Join(lines, "\n")
@@ -160,7 +172,7 @@ type searchParam struct {
 	RequestId   int64       `json:"requestId"`
 	ContentType ContentType `json:"contentType"`
 	MaxLines    int         `json:"maxLines"`
-	Files       []string    `json:"Files"`
+	Files       []string    `json:"files"`
 	Kws         []string    `json:"kws"`
 }
 
@@ -197,7 +209,7 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	}
 	query := r.URL.Query()
 	kws := query["kw"]
-	files := query["Files"]
+	files := query["files"]
 	maxLines, err := strconv.Atoi(query.Get("maxLines"))
 	if err != nil {
 		maxLines = defaultMaxLines
@@ -209,19 +221,21 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	for _, file := range files {
 		filesMap[file] = true
 	}
-	c.search.SearchFromEndAndWrite(w, c.hostName, maxLines, filesMap, kws...)
+	c.dirGrep.SearchAndWrite(&fsearch.SearchAndWriteParam{
+		Writer:   w,
+		HostName: c.hostName,
+		MaxLines: maxLines,
+		FileMap:  filesMap,
+		Kws:      kws,
+	})
 }
 
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-
-	// 对切片进行排序
 	sort.Strings(a)
 	sort.Strings(b)
-
-	// 使用DeepEqual函数比较两个切片是否相等
 	return reflect.DeepEqual(a, b)
 }
 
