@@ -60,10 +60,7 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	w := param.Writer
 	hostName := param.HostName
 	maxLines := param.MaxLines
-	if maxLines == 0 {
-		maxLines = defaultMaxLines
-	}
-	if maxLines > defaultMaxLines {
+	if maxLines <= 0 {
 		maxLines = defaultMaxLines
 	}
 	fileMap := param.FileMap
@@ -83,7 +80,7 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 			return
 		}
 		for _, line := range lines {
-			_, err = w.Write([]byte(line + "\n\n"))
+			_, err = w.Write([]byte(line + "\n"))
 			if err != nil {
 				return
 			}
@@ -112,11 +109,15 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 	l.mux.Lock()
 	defer l.mux.Unlock()
 	if len(l.lines) >= l.maxLines {
-		return len(p), nil
+		return 0, io.EOF
 	}
 	text := string(p)
 	if len(l.kwsFilter) == 0 {
 		l.lines = append(l.lines, strings.Split(text, "\n")...)
+		if len(l.lines) >= l.maxLines {
+			l.lines = l.lines[:l.maxLines]
+			return 0, io.EOF
+		}
 		return len(p), nil
 	}
 	splits := strings.Split(text, "\n")
@@ -130,6 +131,9 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 		}
 		if write {
 			l.lines = append(l.lines, split)
+			if len(l.lines) >= l.maxLines {
+				return 0, io.EOF
+			}
 		}
 	}
 	return len(p), nil
@@ -150,8 +154,10 @@ func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 	cmd.Stderr = w
 	err := cmd.Run()
 	if err != nil {
-		//  exit status 1 when no match
-		return nil
+		//  err may be io.EOF, we ignore it
+		//  signal: broken pipe when exceed maxLines, we ignore it
+		//  exit status 1 when no match, we ignore it
+		return w.lines
 	}
 	return w.lines
 }
