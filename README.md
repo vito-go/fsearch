@@ -7,7 +7,7 @@ Support local remote online registration search.
 ### Server
 
 ```shell
-	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
+	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.2/web.zip
 	unzip web.zip
 
 ```
@@ -17,7 +17,6 @@ package main
 
 import (
 	"github.com/vito-go/fsearch"
-	"github.com/vito-go/fsearch/unilog"
 	"log"
 	"net/http"
 	"os"
@@ -74,7 +73,6 @@ func main() {
 
 ## Demo
 
-http://vitogo.tpddns.cn:9097
 
 <img src="./images/fsearch.png" />
 <img src="./images/fsearch1.png" />
@@ -82,5 +80,3 @@ http://vitogo.tpddns.cn:9097
 
 ## TODO
 - auth for each app
-## FIXME 
-- it will panic when file was deleted
