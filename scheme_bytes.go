@@ -1,4 +1,4 @@
-package unilog
+package fsearch
 
 import (
 	"encoding/binary"
@@ -8,16 +8,16 @@ import (
 const totalLen = 4 + 2 + 1 + 128 + 1 + 64
 const protocol = "lsh:"
 
-type schemaBytes [totalLen]byte
+type schemeBytes [totalLen]byte
 
-func NewSchemaBytes(appName string, hostName string) schemaBytes {
+func NewSchemeBytes(appName string, hostName string) schemeBytes {
 	if len(appName) > 128 {
 		panic("appName can be more than 128")
 	}
 	if len(hostName) > 64 {
 		panic("HostName can be more than 64")
 	}
-	var s schemaBytes
+	var s schemeBytes
 	copy(s[:], protocol)                  // 4
 	binary.BigEndian.PutUint16(s[4:6], 0) //2
 	s[6] = byte(len(appName))             //1
@@ -27,20 +27,20 @@ func NewSchemaBytes(appName string, hostName string) schemaBytes {
 	return s
 }
 
-func (s *schemaBytes) String() string {
-	return fmt.Sprintf("Scheme:%s, Check00:%t,AppName:%s,HostName:%s", s.Scheme(), s.Check00(), s.AppName(), s.HostName())
+func (s *schemeBytes) String() string {
+	return fmt.Sprintf("Scheme:%s, CheckReserved:%t,AppName:%s,HostName:%s", s.Scheme(), s.CheckReserved(), s.AppName(), s.HostName())
 }
-func (s *schemaBytes) Scheme() string {
+func (s *schemeBytes) Scheme() string {
 	return string(s[:4])
 }
 
-func (s *schemaBytes) Check00() bool {
+func (s *schemeBytes) CheckReserved() bool {
 	return s[4] == 0 && s[5] == 0
 }
 
-func (s *schemaBytes) AppName() string {
+func (s *schemeBytes) AppName() string {
 	return string(s[7 : s[6]+7])
 }
-func (s *schemaBytes) HostName() string {
+func (s *schemeBytes) HostName() string {
 	return string(s[136 : s[135]+136])
 }

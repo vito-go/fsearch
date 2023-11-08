@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/vito-go/fsearch/unilog"
+	"github.com/vito-go/fsearch"
 	"github.com/vito-go/fsearch/util"
 	"log"
 	"net/http"
@@ -31,7 +31,7 @@ func clientRegister() {
 	appName := "demoApp"
 	searchDir := "../testdata"         // can be any directory, especially for logs/
 	hostName, _ := util.GetPrivateIP() //hostName can be any flag, but using ip is better
-	cli, err := unilog.NewClient(searchDir, appName, hostName)
+	cli, err := fsearch.NewClient(searchDir, appName, hostName)
 	if err != nil {
 		panic(err)
 	}
@@ -39,7 +39,7 @@ func clientRegister() {
 	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
 
 	// use http to search, param is kw and files, multi kw and multi files are supported
-	// cli.RegisterWithHTTP(8097, "/search") // uncomment this line if you want to use http to search
+	cli.RegisterWithHTTP(8097, "/search") // comment this line if you do not want to use http to search
 	/*
 		when you use http to search, you can use curl to test, or open the url directly in the browser
 		curl --location --request GET 'http://127.0.0.1:8097/search?kw=outstanding&kw=associated'
@@ -55,7 +55,7 @@ func clientRegister() {
 func serverStart() {
 	registerPath := "/ws"   // the path that client register to: ws://127.0.0.1:9097/ws
 	searchPath := "/search" // api for search
-	server := unilog.NewServer(searchPath, "/", registerPath)
+	server := fsearch.NewServer(searchPath, "/", registerPath)
 	log.Println("server start: 9097")
 	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
 	//unzip web.zip

@@ -1,9 +1,8 @@
-package unilog
+package fsearch
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/vito-go/fsearch"
 	"github.com/vito-go/fsearch/util"
 	"golang.org/x/net/websocket"
 	"log"
@@ -12,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -20,11 +18,12 @@ type Client struct {
 	dir      string
 	appName  string
 	hostName string
-	once     sync.Once
-	//
-	search *fsearch.DirSearch
+	dirGrep  *DirGrep
 }
 
+// NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
+// hostName is the name of the host where the application is located,
+// which is used to distinguish the host where the file is located. it can be empty.
 func NewClient(dir string, appName string, hostName string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
@@ -35,21 +34,19 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 	if hostName == "" {
 		hostName = "127.0.0.1"
 	}
-	search, err := fsearch.NewDirSearch(dir)
-	if err != nil {
-		return nil, err
-	}
+	//search, err := fsearch.NewDirSearch(dir)
+	//if err != nil {
+	//	return nil, err
+	//}
 	return &Client{
 		dir:      dir,
 		hostName: hostName,
 		appName:  appName,
-		search:   search,
-		once:     sync.Once{},
+		dirGrep:  &DirGrep{Dir: dir},
 	}, nil
 }
 
-// RegisterToCenter 用于注册服务，注册成功后，会每隔30秒检查一次files是否有变化，如果有变化，会重新注册 注册路由地址
-// export for register
+// RegisterToCenter register to center. wsAddr is the address of the center.
 func (c *Client) RegisterToCenter(wsAddr string) {
 	go c.register(wsAddr, c.appName, c.hostName)
 }
@@ -68,7 +65,8 @@ func (c *Client) RegisterWithHTTP(port uint16, searchPath string) {
 
 }
 
-// forRegister 用于注册服务，注册成功后，会每隔30秒检查一次files是否有变化，如果有变化，会重新注册 注册路由地址
+// register route address. if register success, it will check files every 30 seconds.
+// if files changed, it will send the changed files to the center.
 func (c *Client) register(addr string, appName string, hostName string) {
 	for {
 		c.forWS(addr, appName, hostName)
@@ -88,7 +86,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		return
 	}
 	defer ws.Close()
-	b := NewSchemaBytes(appName, hostName)
+	b := NewSchemeBytes(appName, hostName)
 	err = websocket.Message.Send(ws, b[:])
 	if err != nil {
 		log.Println("send error:", err.Error())
@@ -97,7 +95,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 	go func() {
 		var oldFiles []string
 		for {
-			newFiles := c.search.Files()
+			newFiles := c.dirGrep.FileNames()
 			if !slicesEqual(oldFiles, newFiles) {
 				log.Printf("ready to send fiels: %+v\n", newFiles)
 				newLinesBytes, _ := json.Marshal(newFiles)
@@ -130,13 +128,18 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		if maxLines > maxLinesLimit {
 			maxLines = maxLinesLimit
 		}
-		filesMap := make(map[string]bool, len(param.Files))
+		filesMap := make(map[string]struct{}, len(param.Files))
 		for _, file := range param.Files {
-			filesMap[file] = true
+			filesMap[file] = struct{}{}
 		}
 		var builder strings.Builder
-		//lines := c.search.SearchFromEndAndWrite(maxLines, filesMap, param.Kws...)
-		c.search.SearchFromEndAndWrite(&builder, hostName, maxLines, filesMap, param.Kws...)
+		c.dirGrep.SearchAndWrite(&SearchAndWriteParam{
+			Writer:   &builder,
+			HostName: hostName,
+			MaxLines: maxLines,
+			FileMap:  filesMap,
+			Kws:      param.Kws,
+		})
 		//var content string
 		//if len(lines) > 0 {
 		//	content = strings.Join(lines, "\n")
@@ -153,14 +156,14 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			return
 		}
 	}
-	// 每30秒检查一次files是否有变化
+	// every 30 seconds, send files to center if files changed.
 }
 
 type searchParam struct {
 	RequestId   int64       `json:"requestId"`
 	ContentType ContentType `json:"contentType"`
 	MaxLines    int         `json:"maxLines"`
-	Files       []string    `json:"Files"`
+	Files       []string    `json:"files"`
 	Kws         []string    `json:"kws"`
 }
 
@@ -188,6 +191,7 @@ type sendData struct {
 }
 
 func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
+	// CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
@@ -197,33 +201,38 @@ func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	}
 	query := r.URL.Query()
 	kws := query["kw"]
-	files := query["Files"]
+	files := query["files"]
 	maxLines, err := strconv.Atoi(query.Get("maxLines"))
 	if err != nil {
+		maxLines = defaultMaxLines
+	}
+	if maxLines <= 0 {
 		maxLines = defaultMaxLines
 	}
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
-	filesMap := make(map[string]bool, len(files))
+	filesMap := make(map[string]struct{}, len(files))
 	for _, file := range files {
-		filesMap[file] = true
+		filesMap[file] = struct{}{}
 	}
-	c.search.SearchFromEndAndWrite(w, c.hostName, maxLines, filesMap, kws...)
+	c.dirGrep.SearchAndWrite(&SearchAndWriteParam{
+		Writer:   w,
+		HostName: c.hostName,
+		MaxLines: maxLines,
+		FileMap:  filesMap,
+		Kws:      kws,
+	})
 }
 
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-
-	// 对切片进行排序
 	sort.Strings(a)
 	sort.Strings(b)
-
-	// 使用DeepEqual函数比较两个切片是否相等
 	return reflect.DeepEqual(a, b)
 }
 
-const defaultMaxLines = 50
-const maxLinesLimit = 200
+const defaultMaxLines = 64
+const maxLinesLimit = 100
