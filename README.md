@@ -27,7 +27,7 @@ import (
 var staticEmbededFile embed.FS
 */
 func main() {
-	server := fsearch.NewServer("/search", "/", "/ws")
+	server := fsearch.NewServer("/search", "/", "/wsRegister")
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir("web")
@@ -48,23 +48,17 @@ package main
 import (
 	"github.com/vito-go/fsearch"
 	"github.com/vito-go/fsearch/util"
-	"os"
-	"path/filepath"
 )
 
 func main() {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
 	appName := "demoApp"
 	searchDir := "github.com/vito-go/fsearch" // can be any directory, especially for logs/ 
 	hostName, _ := util.GetPrivateIP()        //hostName can be any flag
-	cli, err := fsearch.NewClient(filepath.Join(homeDir, searchDir), appName, hostName)
+	cli, err := fsearch.NewClient(searchDir, appName, hostName)
 	if err != nil {
 		panic(err)
 	}
-	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
+	cli.RegisterToCenter("ws://127.0.0.1:9097/wsRegister")
 	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
 	// write here your own code instead of select {}
 	select {}
@@ -80,4 +74,4 @@ func main() {
 
 ## TODO
 
-- auth for each app
+- auth support 
