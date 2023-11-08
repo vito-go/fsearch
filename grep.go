@@ -121,17 +121,18 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 		}
 		return len(p), nil
 	}
-	splits := strings.Split(text, "\n")
-	for _, split := range splits {
-		var count int
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		write := true
+		// if any kw not in line, not write
 		for _, kw := range l.kwsFilter {
-			if strings.Contains(split, kw) {
-				count++
+			if !strings.Contains(line, kw) {
+				write = false
 				break
 			}
 		}
-		if count == len(l.kwsFilter) {
-			l.lines = append(l.lines, split)
+		if write {
+			l.lines = append(l.lines, line)
 			if len(l.lines) >= l.maxLines {
 				return 0, io.EOF
 			}
