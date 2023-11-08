@@ -1,7 +1,8 @@
 # fsearch
 
-Search text in files quickly(using linux mmap), especially for log searching. Directories are supported.
-Support local remote online registration search.
+Search text in files quickly(using linux grep command), especially for log searching. Directories are supported.
+Support local remote online registration search and single machine search.
+
 ## Quick Start
 
 ### Server
@@ -24,14 +25,10 @@ import (
 )
 
 func main() {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
 	server := fsearch.NewServer("/search", "/", "/ws")
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
-	staticWebFile := http.Dir(filepath.Join(homeDir, "go/src/github.com/vito-go/fsearch_flutter/build/web"))
+	staticWebFile := http.Dir("web")
 	server.StartListenAndServe(staticWebFile, ":9097")
 }
 
@@ -65,7 +62,7 @@ func main() {
 	}
 	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
 	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
- 	// write here your own code instead of select {}
+	// write here your own code instead of select {}
 	select {}
 }
 
@@ -73,10 +70,10 @@ func main() {
 
 ## Demo
 
-
 <img src="./images/fsearch.png" />
 <img src="./images/fsearch1.png" />
 <img src="./images/fsearch2.png" />
 
 ## TODO
+
 - auth for each app
