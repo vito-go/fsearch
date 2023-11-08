@@ -123,14 +123,14 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 	}
 	splits := strings.Split(text, "\n")
 	for _, split := range splits {
-		var write bool
+		var count int
 		for _, kw := range l.kwsFilter {
 			if strings.Contains(split, kw) {
-				write = true
+				count++
 				break
 			}
 		}
-		if write {
+		if count == len(l.kwsFilter) {
 			l.lines = append(l.lines, split)
 			if len(l.lines) >= l.maxLines {
 				return 0, io.EOF
@@ -141,16 +141,16 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 }
 
 func grepFromFile(maxLines int, filePath string, kws ...string) []string {
+	kws = parseDuplicateKws(kws)
 	if len(kws) == 0 {
 		return nil
 	}
-	// 定义命令和参数
-	// maxLines*2是为了防止grep命令在文件中找到的关键字行数不够maxLines
+	// maxLines * 2 in case the number of lines found by the grep command in the file is not enough maxLines
 	cmdStr := fmt.Sprintf("grep -m %d --color=never -a '%s' %s", maxLines*2, kws[0], filePath)
 	//cmdStr := fmt.Sprintf("grep -m %d -a '%s' %s", maxLines*2, kws[0], filePath)
 	cmd := exec.Command("bash", "-c", cmdStr)
 	var w = newLinesWriter(kws[1:], maxLines)
-	// 设置命令的标准输出和错误输出
+	// set linesWriter to cmd.Stdout and cmd.Stderr
 	cmd.Stdout = w
 	cmd.Stderr = w
 	err := cmd.Run()
@@ -161,4 +161,24 @@ func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 		return w.lines
 	}
 	return w.lines
+}
+
+// parseDuplicateKws parse duplicate []string and remain the order
+func parseDuplicateKws(kws []string) []string {
+	if len(kws) == 0 {
+		return nil
+	}
+	kwsMap := make(map[string]struct{}, len(kws))
+	var kwsResult []string
+	for _, kw := range kws {
+		if kw == "" {
+			continue
+		}
+		if _, ok := kwsMap[kw]; ok {
+			continue
+		}
+		kwsMap[kw] = struct{}{}
+		kwsResult = append(kwsResult, kw)
+	}
+	return kwsResult
 }

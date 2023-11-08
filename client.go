@@ -156,7 +156,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			return
 		}
 	}
-	// 每30秒检查一次files是否有变化
+	// every 30 seconds, send files to center if files changed.
 }
 
 type searchParam struct {
@@ -191,6 +191,7 @@ type sendData struct {
 }
 
 func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
+	// CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
