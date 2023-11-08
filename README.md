@@ -4,7 +4,7 @@ Search text in files quickly(using linux grep command), especially for log searc
 Support local remote online registration search and single machine search.
 
 ## Quick Start
-
+- Look at the example directory for more details.
 ### Server
 
 ```shell
