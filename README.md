@@ -20,8 +20,6 @@ import (
 	"github.com/vito-go/fsearch"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 )
 
 func main() {
