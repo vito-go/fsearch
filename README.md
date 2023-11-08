@@ -21,12 +21,18 @@ import (
 	"log"
 	"net/http"
 )
-
+// uncomment this if you want to use embed file
+/*
+//go:embed web
+var staticEmbededFile embed.FS
+*/
 func main() {
 	server := fsearch.NewServer("/search", "/", "/ws")
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir("web")
+	// you can also use embed file here, but you need to uncomment the code above and import embed
+	// e.g staticWebFile := http.FS(staticEmbededFile)
 	server.StartListenAndServe(staticWebFile, ":9097")
 }
 
