@@ -46,11 +46,11 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 
 // SearchAndWriteParam is the parameter of SearchAndWrite.
 type SearchAndWriteParam struct {
-	Writer   io.Writer           // The writer is used to write the search results.
-	HostName string              // The hostName is used to distinguish the host where the file is located.
-	MaxLines int                 // At most maxLines lines of output are printed for each file searched. The default is defaultMaxLines.
-	FileMap  map[string]struct{} // The fileMap is used to filter the files to be searched. If the fileMap is empty, all files in the directory are searched.
-	Kws      []string            // The kws is the keyword to be searched.
+	Writer   io.Writer           // The Writer is used to write the search results.
+	HostName string              // The HostName is used to distinguish the host where the file is located.
+	MaxLines int                 // At most MaxLines lines of output are printed for each file searched. The default is defaultMaxLines.
+	FileMap  map[string]struct{} // The FileMap is used to filter the files to be searched. If the fileMap is empty, all files in the directory are searched.
+	Kws      []string            // The Kws is the keyword to be searched.
 }
 
 func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {

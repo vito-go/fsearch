@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -19,7 +18,6 @@ type Client struct {
 	dir      string
 	appName  string
 	hostName string
-	once     sync.Once
 	dirGrep  *DirGrep
 }
 
@@ -44,9 +42,7 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 		dir:      dir,
 		hostName: hostName,
 		appName:  appName,
-		//search:   search,
-		dirGrep: &DirGrep{Dir: dir},
-		once:    sync.Once{},
+		dirGrep:  &DirGrep{Dir: dir},
 	}, nil
 }
 
@@ -90,7 +86,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		return
 	}
 	defer ws.Close()
-	b := NewSchemaBytes(appName, hostName)
+	b := NewSchemeBytes(appName, hostName)
 	err = websocket.Message.Send(ws, b[:])
 	if err != nil {
 		log.Println("send error:", err.Error())

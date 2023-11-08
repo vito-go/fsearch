@@ -155,7 +155,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		log.Println("unilog: read error:", err.Error())
 		return
 	}
-	var buf schemaBytes
+	var buf schemeBytes
 	copy(buf[:], bufBytes)
 	log.Println(ws.Request().RemoteAddr, "register", buf.String())
 	if buf.Scheme() != protocol {
