@@ -1,6 +1,7 @@
 package fsearch
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -111,7 +112,7 @@ func (l *linesWriter) Write(p []byte) (n int, err error) {
 	if len(l.lines) >= l.maxLines {
 		return 0, io.EOF
 	}
-	text := string(p)
+	text := string(bytes.TrimSpace(p))
 	if len(l.kwsFilter) == 0 {
 		l.lines = append(l.lines, strings.Split(text, "\n")...)
 		if len(l.lines) >= l.maxLines {
