@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 func init() {
@@ -55,12 +56,40 @@ func clientRegister() {
 func serverStart() {
 	registerPath := "/ws"   // the path that client register to: ws://127.0.0.1:9097/ws
 	searchPath := "/search" // api for search
-	server := fsearch.NewServer(searchPath, "/", registerPath)
+	var indexPath string
+	indexPath = "/" // index path must end with /, usually it's a single slash /
+	//indexPath = "/" // index path must end with /
+	var authMap map[string]*fsearch.AccountConfig
+	//authMap = map[string]*fsearch.AccountConfig{
+	//	"test": &fsearch.AccountConfig{
+	//		Username:         "test",
+	//		Password:         "test",
+	//		AllowedAppNames:  nil,
+	//		ExcludedAppNames: []string{"demoApp"},
+	//	},
+	//}
+	//authMap can be nil, if it's nil, no auth is required
+	// if excludedAppNames is not nil, then it will be used to exclude some appNames
+	server := fsearch.NewServer(searchPath, indexPath, registerPath, authMap)
 	log.Println("server start: 9097")
-	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.1/web.zip
+	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.2/web.zip
 	//unzip web.zip
 	// the staticDir is that you download and unzip above, more details in README.md
 	staticDir := "web"
 	staticWebFile := http.Dir(staticDir)
 	log.Fatalln(server.StartListenAndServe(staticWebFile, ":9097"))
+	// if the index path is not "/", please user fOpen, uncomment the following lines
+	// log.Fatalln(server.StartListenAndServe(&fOpen{dir: staticDir, indexPath: indexPath}, ":9097"))
+}
+
+type fOpen struct {
+	dir       string
+	indexPath string
+}
+
+func (f fOpen) Open(name string) (http.File, error) {
+	if f.indexPath == "/" {
+		return http.Dir(f.dir).Open(name)
+	}
+	return http.Dir(f.dir).Open(strings.TrimPrefix(name, strings.TrimSuffix(f.indexPath, "/")))
 }

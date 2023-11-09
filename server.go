@@ -1,6 +1,7 @@
 package fsearch
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -23,20 +24,60 @@ type Server struct {
 	appHostData         appHostData
 	searchResultSyncMap *searchResultSyncMap
 	wsSyncMap           *wsSyncMap
+	// auth map, key: username, value: AccountConfig
+	authMap map[string]*AccountConfig
 }
 
-// NewServer create a new unilog server. searchPath is the search path. indexPath is the static file path.
+// AccountConfig is the account config. when auth is enabled, it will check the username and password.
+// if AllowedAppNames is not empty, it will check the appName.
+// ExcludedAppNames only exclude the appName in it.
+// if AllowedAppNames and ExcludedAppNames are both empty, it will allow all appNames.
+// if there is the same one in AllowedAppNames and ExcludedAppNames, it will be excluded.
+type AccountConfig struct {
+	Username         string
+	Password         string
+	AllowedAppNames  []string // if empty, all appNames are allowed
+	ExcludedAppNames []string // if empty, no appNames are excluded
+}
+
+func (a *AccountConfig) CheckAppName(appName string) bool {
+	if a.Username == "_" {
+		return true
+	}
+	for _, name := range a.ExcludedAppNames {
+		if name == appName {
+			return false
+		}
+	}
+	if len(a.AllowedAppNames) > 0 {
+		for _, name := range a.AllowedAppNames {
+			if name == appName {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+var AccountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
+
+// NewServer create a new unilog server. searchPath is the search path. indexPath is the static file path, it must end with /.
 // configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
+// authMap: map[username]AccountConfig, it can be nil if you do not need auth
 // for example:
 //
 // searchPath: /search
 //
-// indexPath: /index/
-//
-// configPath: /user/_internal/config
+// indexPath: /
 //
 // wsRegisterPath: /ws
-func NewServer(searchPath string, indexPath string, registerPath string) *Server {
+//
+// authMap: nil
+func NewServer(searchPath string, indexPath string, registerPath string, authMap map[string]*AccountConfig) *Server {
+	if !strings.HasSuffix(indexPath, "/") {
+		panic("indexPath must end with /")
+	}
 	searchPathHttp := searchPath
 	var configPath string
 	if searchPath == "/" {
@@ -54,68 +95,44 @@ func NewServer(searchPath string, indexPath string, registerPath string) *Server
 		configPath:          configPath,
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
 		appHostData:         appHostData{mux: sync.RWMutex{}, data: make(map[string]map[uint64]*NodeInfo)},
+		authMap:             authMap,
 	}
 }
 
 // RegisterWithMux register to mux. fileSystem is the static file system.
 func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
-	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
-	mux.HandleFunc(s.configPath, s.configHandler)
-	mux.Handle(s.indexPath, http.FileServer(fileSystem))
-	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+	s.registerWithMux(mux, fileSystem)
 }
 
 // RegisterWithGin register to gin. fileSystem is the static file system.
 func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
+	// user middleware to check auth
 	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
 		s.searchTextHTTP(ctx.Writer, ctx.Request)
 	})
-
 	mux.GET(s.configPath, func(ctx *gin.Context) {
 		s.configHandler(ctx.Writer, ctx.Request)
 	})
-
-	mux.StaticFS(s.indexPath, fileSystem)
 	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
 		websocket.Handler(s.registerWS).ServeHTTP(ctx.Writer, ctx.Request)
 	})
+	mux.Use(func(ctx *gin.Context) {
+		w, r := ctx.Writer, ctx.Request
+		if _, ok := s.checkAuth(w, r); !ok {
+			ctx.Abort()
+			return
+		}
+		ctx.Next()
+	})
+	mux.StaticFS(s.indexPath, fileSystem)
 }
 
 // StartListenAndServe start server. addr is the listen address, for example: :9097
-// fileSystem is the static file system.
+// fileSystem is the static file system. fileSystem can be fs.EmbeddedFS, http.Dir, or any other http.FileSystem.
 func (s *Server) StartListenAndServe(fileSystem http.FileSystem, addr string) error {
 	mux := http.ServeMux{}
-	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
-	mux.HandleFunc(s.configPath, s.configHandler)
-	mux.Handle(s.indexPath, http.FileServer(fileSystem))
-	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+	s.registerWithMux(&mux, fileSystem)
 	return http.ListenAndServe(addr, &mux)
-}
-
-type searchResultSyncMap struct {
-	mux     sync.RWMutex
-	dataMap map[int64]chan *sendData // key: appName_uniqueId
-}
-
-func (s *searchResultSyncMap) Set(requestId int64, ch chan *sendData) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.dataMap[requestId] = ch
-}
-
-func (s *searchResultSyncMap) Del(requestId int64) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	delete(s.dataMap, requestId)
-}
-
-func (s *searchResultSyncMap) Get(requestId int64) (chan *sendData, bool) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-	if ch, ok := s.dataMap[requestId]; ok {
-		return ch, true
-	}
-	return nil, false
 }
 
 type wsSyncMap struct {
@@ -226,20 +243,78 @@ type webConfigData struct {
 	SearchPathHTTP string        `json:"searchPathHTTP,omitempty"`
 }
 
+var noAuthSuffix = []string{".json", ".js", ".css", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff2", ".woff", ".ttf", ".eot", ".map", "yaml"}
+
+func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *AccountConfig, result bool) {
+	if len(s.authMap) == 0 {
+		return AccountConfigNoAuth, true
+	}
+	if r.Header.Get("X-Authorization-Clear") == "true" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="fsearch"`)
+		w.WriteHeader(http.StatusUnauthorized)
+		return nil, false
+	}
+	defer func() {
+		if !result {
+			w.Header().Set("WWW-Authenticate", `Basic realm="fsearch"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}()
+	// there is no need to auth for static resource, such as "/manifest.json"
+	for _, suffix := range noAuthSuffix {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			return AccountConfigNoAuth, true
+		}
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Basic ") {
+		return nil, false
+	}
+	encoded := auth[6:]
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, false
+	}
+	ss := strings.Split(string(decoded), ":")
+	if len(ss) != 2 {
+		return nil, false
+	}
+
+	expected, ok := s.authMap[ss[0]]
+	if !ok {
+		return nil, false
+	}
+	if expected.Password != ss[1] {
+		return nil, false
+	}
+	return expected, true
+}
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid CORS
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "*")
+
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
 		return
+	}
+	user, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
+	clusterNodes := s.appHostData.GetClusterNodes()
+	clusterNodeFilter := make([]ClusterNode, 0, len(clusterNodes))
+	for i, node := range clusterNodes {
+		if user.CheckAppName(node.AppName) {
+			clusterNodeFilter = append(clusterNodeFilter, clusterNodes[i])
+		}
 	}
 	body := respBody{
 		Code:    0,
 		Message: "",
 		Data: webConfigData{
-			ClusterNodes:   s.appHostData.GetClusterNodes(),
+			ClusterNodes:   clusterNodeFilter,
 			SearchPathHTTP: s.searchPathHTTP,
 		},
 	}
@@ -255,13 +330,21 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
 		return
 	}
+	accountInfo, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
 	query := r.URL.Query()
 	appName := query.Get("appName")
 	if appName == "" {
-		if w, ok := w.(http.ResponseWriter); ok {
-			w.WriteHeader(http.StatusBadRequest)
-		}
+		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("no appName"))
+		return
+	}
+	if !accountInfo.CheckAppName(appName) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("WWW-Authenticate", `Basic realm="fsearch"`)
+		w.Write([]byte(fmt.Sprintf("appName: %s is not allowed", appName)))
 		return
 	}
 	var nodeId uint64
@@ -419,4 +502,44 @@ type respBody struct {
 func (r *respBody) ToBytes() []byte {
 	b, _ := json.Marshal(r)
 	return b
+}
+
+func (s *Server) registerWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
+	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
+	mux.HandleFunc(s.configPath, s.configHandler)
+	fs := http.FileServer(fileSystem)
+	mux.HandleFunc(s.indexPath, func(w http.ResponseWriter, r *http.Request) {
+		// check auth
+		if _, ok := s.checkAuth(w, r); !ok {
+			return
+		}
+		fs.ServeHTTP(w, r)
+	})
+	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+}
+
+type searchResultSyncMap struct {
+	mux     sync.RWMutex
+	dataMap map[int64]chan *sendData // key: appName_uniqueId
+}
+
+func (s *searchResultSyncMap) Set(requestId int64, ch chan *sendData) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	s.dataMap[requestId] = ch
+}
+
+func (s *searchResultSyncMap) Del(requestId int64) {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	delete(s.dataMap, requestId)
+}
+
+func (s *searchResultSyncMap) Get(requestId int64) (chan *sendData, bool) {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	if ch, ok := s.dataMap[requestId]; ok {
+		return ch, true
+	}
+	return nil, false
 }
