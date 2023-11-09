@@ -21,13 +21,18 @@ import (
 	"log"
 	"net/http"
 )
+
 // uncomment this if you want to use embed file
 /*
 //go:embed web
 var staticEmbededFile embed.FS
 */
 func main() {
-	server := fsearch.NewServer("/search", "/", "/wsRegister")
+	authMap := map[string]*fsearch.AccountConfig{
+		// you can add more account here		
+	}
+	// authMap can be nil if you don't need auth
+	server := fsearch.NewServer("/search", "/", "/wsRegister", authMap)
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir("web")
@@ -74,4 +79,5 @@ func main() {
 
 ## TODO
 
-- auth support 
+- auth support  
+    - done
