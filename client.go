@@ -97,7 +97,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		for {
 			newFiles := c.dirGrep.FileNames()
 			if !slicesEqual(oldFiles, newFiles) {
-				log.Printf("ready to send fiels: %+v\n", newFiles)
+				log.Printf("files changed, old: %v, new: %v\n", oldFiles, newFiles)
 				newLinesBytes, _ := json.Marshal(newFiles)
 				sendBytes, _ := json.Marshal(sendData{ContentType: contentTypeFiles, Content: string(newLinesBytes)})
 				err = websocket.Message.Send(ws, sendBytes)
@@ -115,7 +115,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		var buf []byte
 		err = websocket.Message.Receive(ws, &buf)
 		if err != nil {
-			log.Println("receiver server error: ", err)
+			log.Println("receive error:", err.Error())
 			return
 		}
 		var param searchParam
@@ -234,5 +234,5 @@ func slicesEqual(a, b []string) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-const defaultMaxLines = 64
-const maxLinesLimit = 100
+const defaultMaxLines = 100
+const maxLinesLimit = 256

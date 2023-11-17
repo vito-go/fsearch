@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -20,9 +22,12 @@ func NewDirGrep(dir string) *DirGrep {
 	return &DirGrep{Dir: dir}
 }
 
+// FileNames get all file names in the directory.
 func (f *DirGrep) FileNames() []string {
 	return f.fileNamesBy(nil)
 }
+
+// fileNamesBy get file names by fileMap, if fileMap is empty, all files in the directory are searched.
 func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 	dirEntries, err := os.ReadDir(f.Dir)
 	if err != nil {
@@ -33,6 +38,19 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 		if entry.IsDir() {
 			continue
 		}
+		// filter file by file name when start with .
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		// filter file if there is no dot in the file name
+		if !strings.Contains(entry.Name(), ".") {
+			continue
+		}
+		// filter file if binary file
+		if isBinaryFile(filepath.Join(f.Dir, entry.Name())) {
+			continue
+		}
+
 		if len(fileMap) == 0 {
 			fileNames = append(fileNames, entry.Name())
 			continue
@@ -43,6 +61,18 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 	}
 	return fileNames
 
+}
+
+// check if the file is binary file
+func isBinaryFile(filePath string) bool {
+	cmd := exec.Command("file", filePath)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out.String(), "binary")
 }
 
 // SearchAndWriteParam is the parameter of SearchAndWrite.
@@ -147,9 +177,9 @@ func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 		return nil
 	}
 	// maxLines * 2 in case the number of lines found by the grep command in the file is not enough maxLines
-	cmdStr := fmt.Sprintf("grep -m %d --color=never -a '%s' %s", maxLines*2, kws[0], filePath)
-	//cmdStr := fmt.Sprintf("grep -m %d -a '%s' %s", maxLines*2, kws[0], filePath)
-	cmd := exec.Command("bash", "-c", cmdStr)
+	cmdArgs := []string{"-m", strconv.Itoa(maxLines * 2), "--color=never", "-a", "--", kws[0], filePath}
+	log.Printf("grep %s\n", strings.Join(cmdArgs, " "))
+	cmd := exec.Command("grep", cmdArgs...)
 	var w = newLinesWriter(kws[1:], maxLines)
 	// set linesWriter to cmd.Stdout and cmd.Stderr
 	cmd.Stdout = w
