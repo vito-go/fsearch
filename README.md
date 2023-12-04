@@ -81,3 +81,4 @@ func main() {
 
 - auth support  
     - done
+- the result grep may be not a whole line, but a part of line, so we need to show the whole line using `strings.Builder`
