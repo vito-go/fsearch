@@ -84,6 +84,11 @@ type SearchAndWriteParam struct {
 	Kws      []string            // The Kws is the keyword to be searched.
 }
 
+type fileNameAndLines struct {
+	fileName string
+	lines    []string
+}
+
 func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	if param == nil {
 		return
@@ -100,18 +105,37 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 		return
 	}
 	fileNames := f.fileNamesBy(fileMap)
+	chanLines := make(chan *fileNameAndLines, len(fileNames))
+	var wg sync.WaitGroup
 	for _, name := range fileNames {
+		name := name
 		filePath := filepath.Join(f.Dir, name)
-		lines := grepFromFile(maxLines, filePath, kws...)
-		if len(lines) == 0 {
-			continue
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lines := grepFromFile(maxLines, filePath, kws...)
+			if len(lines) == 0 {
+				return
+			}
+			chanLines <- &fileNameAndLines{
+				fileName: name,
+				lines:    lines,
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(chanLines)
+	}()
+	for fLines := range chanLines {
+		name := fLines.fileName
+		lines := fLines.lines
 		_, err := w.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, name)))
 		if err != nil {
 			return
 		}
 		for _, line := range lines {
-			_, err = w.Write([]byte(line + "\n"))
+			_, err := w.Write([]byte(line + "\n"))
 			if err != nil {
 				return
 			}

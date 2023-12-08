@@ -472,7 +472,7 @@ func (s *Server) write(w http.ResponseWriter, appName, hostName string, nodeId u
 			select {
 			case data := <-ch:
 				channelData <- data
-			case <-time.After(time.Second * 6):
+			case <-time.After(time.Second * 12):
 			}
 		}()
 	}
