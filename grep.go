@@ -146,53 +146,34 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	}
 }
 
-type linesWriter struct {
-	mux       sync.Mutex
-	maxLines  int
-	lines     []string
-	kwsFilter []string
-}
-
-func newLinesWriter(kwsFilter []string, maxLines int) *linesWriter {
-	return &linesWriter{
-		lines:     make([]string, 0, 16),
-		maxLines:  maxLines,
-		kwsFilter: kwsFilter,
-	}
-}
-func (l *linesWriter) Write(p []byte) (n int, err error) {
-	l.mux.Lock()
-	defer l.mux.Unlock()
-	if len(l.lines) >= l.maxLines {
-		return 0, io.EOF
-	}
-	text := string(bytes.TrimSpace(p))
-	if len(l.kwsFilter) == 0 {
-		l.lines = append(l.lines, strings.Split(text, "\n")...)
-		if len(l.lines) >= l.maxLines {
-			l.lines = l.lines[:l.maxLines]
-			return 0, io.EOF
-		}
-		return len(p), nil
-	}
+func buildLines(buffer []byte, maxLines int, kwsFilter []string) []string {
+	p := bytes.TrimSpace(buffer)
+	text := string(p)
 	lines := strings.Split(text, "\n")
+	if len(kwsFilter) == 0 {
+		if len(lines) > maxLines {
+			return lines[:maxLines]
+		}
+		return lines
+	}
+	linesFilter := make([]string, 0, len(lines))
 	for _, line := range lines {
 		write := true
 		// if any kw not in line, not write
-		for _, kw := range l.kwsFilter {
+		for _, kw := range kwsFilter {
 			if !strings.Contains(line, kw) {
 				write = false
 				break
 			}
 		}
 		if write {
-			l.lines = append(l.lines, line)
-			if len(l.lines) >= l.maxLines {
-				return 0, io.EOF
+			if len(linesFilter) >= maxLines {
+				break
 			}
+			linesFilter = append(linesFilter, line)
 		}
 	}
-	return len(p), nil
+	return linesFilter
 }
 
 func grepFromFile(maxLines int, filePath string, kws ...string) []string {
@@ -200,22 +181,26 @@ func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 	if len(kws) == 0 {
 		return nil
 	}
+	kwsFilter := kws[1:]
+	grepMaxLines := maxLines
+	if len(kwsFilter) > 0 {
+		grepMaxLines = maxLines * 2
+	}
 	// maxLines * 2 in case the number of lines found by the grep command in the file is not enough maxLines
-	cmdArgs := []string{"-m", strconv.Itoa(maxLines * 2), "--color=never", "-a", "--", kws[0], filePath}
+	cmdArgs := []string{"-m", strconv.Itoa(grepMaxLines), "--color=never", "-a", "--", kws[0], filePath}
 	log.Printf("grep %s\n", strings.Join(cmdArgs, " "))
 	cmd := exec.Command("grep", cmdArgs...)
-	var w = newLinesWriter(kws[1:], maxLines)
-	// set linesWriter to cmd.Stdout and cmd.Stderr
-	cmd.Stdout = w
-	cmd.Stderr = w
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
 	err := cmd.Run()
 	if err != nil {
 		//  err may be io.EOF, we ignore it
 		//  signal: broken pipe when exceed maxLines, we ignore it
 		//  exit status 1 when no match, we ignore it
-		return w.lines
+		return nil
 	}
-	return w.lines
+	return buildLines(buf.Bytes(), maxLines, kwsFilter)
 }
 
 // parseDuplicateKws parse duplicate []string and remain the order
