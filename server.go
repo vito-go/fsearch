@@ -1,6 +1,7 @@
 package fsearch
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -374,9 +375,9 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
-	s.write(w, appName, hostName, nodeId, int(maxLines), files, kws...)
+	s.write(r.Context(), w, appName, hostName, nodeId, int(maxLines), files, kws...)
 }
-func (s *Server) write(w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
+func (s *Server) write(ctx context.Context, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
 	if len(kws) == 0 {
 		return
 	}
@@ -472,7 +473,8 @@ func (s *Server) write(w http.ResponseWriter, appName, hostName string, nodeId u
 			select {
 			case data := <-ch:
 				channelData <- data
-			case <-time.After(time.Second * 12):
+			case <-ctx.Done():
+				// client close the connection
 			}
 		}()
 	}
