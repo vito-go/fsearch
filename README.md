@@ -8,7 +8,7 @@ Support local remote online registration search and single machine search.
 ### Server
 
 ```shell
-	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.2/web.zip
+	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.5/web.zip
 	unzip web.zip
 
 ```
