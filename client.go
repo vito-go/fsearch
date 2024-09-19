@@ -2,8 +2,8 @@ package fsearch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/vito-go/fsearch/util"
 	"golang.org/x/net/websocket"
 	"log"
 	"net"
@@ -24,15 +24,13 @@ type Client struct {
 }
 
 // NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
-// hostName is the name of the host where the application is located,
-// which is used to distinguish the host where the file is located. it can be empty.
-func NewClient(searchTargetDir string, appName string, hostName string) (*Client, error) {
+func NewClient(searchTargetDir string, appName string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
 	}
-	if hostName == "" {
-		hostName, _ = util.GetPrivateIP()
-	}
+	// hostName is the name of the host where the application is located,
+	// which is used to distinguish the host where the file is located.
+	hostName, _ := getPrivateIP()
 	if hostName == "" {
 		hostName, _ = os.Hostname()
 	}
@@ -70,18 +68,20 @@ func (c *Client) RegisterWithHTTP(port uint16, searchPath string) error {
 // register route address. if register success, it will check files every 30 seconds.
 // if files changed, it will send the changed files to the center.
 func (c *Client) register(addr string, appName string, hostName string) {
-	for {
+	// use time.Ticker to replace time.Sleep
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for range ticker.C {
 		c.forWS(addr, appName, hostName)
-		time.Sleep(time.Second * 10)
 	}
 
 }
 func (c *Client) forWS(addr string, appName string, hostName string) {
-	localHost, _ := util.GetPrivateIP()
-	if localHost == "" {
-		localHost = "127.0.0.1"
+	originHost, _ := getPrivateIP()
+	if originHost == "" {
+		originHost = "127.0.0.1"
 	}
-	ws, err := websocket.Dial(addr, wsProtocol, fmt.Sprintf("http://%s", localHost))
+	ws, err := websocket.Dial(addr, wsProtocol, fmt.Sprintf("http://%s", originHost))
 	if err != nil {
 		log.Println("websocket.Dial error: ", err.Error())
 		return
@@ -99,6 +99,8 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 	}
 	go func() {
 		var oldFiles []string
+		ticker := time.NewTicker(time.Second * 30)
+		defer ticker.Stop()
 		for {
 			newFiles := c.dirGrep.FileNames()
 			if !slicesEqual(oldFiles, newFiles) {
@@ -110,7 +112,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 				}
 				oldFiles = newFiles
 			}
-			time.Sleep(time.Second * 30)
+			<-ticker.C
 		}
 	}()
 
@@ -195,11 +197,7 @@ type sendData struct {
 
 func (c *Client) searchText(w http.ResponseWriter, r *http.Request) {
 	// CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "*")
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+	if cors(w, r) {
 		return
 	}
 	query := r.URL.Query()
@@ -239,3 +237,16 @@ func slicesEqual(a, b []string) bool {
 
 const defaultMaxLines = 100
 const maxLinesLimit = 256
+
+func getPrivateIP() (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.IsPrivate() {
+			return ipNet.IP.String(), err
+		}
+	}
+	return "", errors.New("no private ip")
+}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/vito-go/fsearch"
-	"github.com/vito-go/fsearch/util"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,15 +27,15 @@ func main() {
 // if connection failed, it will retry every 10 seconds
 func clientRegister() {
 	appName := "demoApp"
-	searchDir := "../testdata"         // can be any directory, especially for logs/
-	hostName, _ := util.GetPrivateIP() //hostName can be any flag, but using ip is better
-	cli, err := fsearch.NewClient(searchDir, appName, hostName)
+	searchDir := "../testdata" // can be any directory, especially for logs/
+	cli, err := fsearch.NewClient(searchDir, appName)
 	if err != nil {
 		panic(err)
 	}
-	cli.RegisterToCenter("ws://127.0.0.1:9097/ws")
-
+	centerWSAddr := "ws://127.0.0.1:9097/ws"
+	cli.RegisterToCenter(centerWSAddr)
 	// use http to search, param is kw and files, multi kw and multi files are supported
+	// query: kw, files, maxLines
 	if err = cli.RegisterWithHTTP(8097, "/search"); err != nil {
 		panic(err)
 	} // comment this line if you do not want to use http to search

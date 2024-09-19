@@ -61,7 +61,7 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 	return true
 }
 
-var AccountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
+var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
 // configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
@@ -246,7 +246,7 @@ var noAuthSuffix = []string{".json", ".js", ".css", ".ico", ".png", ".jpg", ".jp
 
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *AccountConfig, result bool) {
 	if len(s.authMap) == 0 {
-		return AccountConfigNoAuth, true
+		return accountConfigNoAuth, true
 	}
 	if r.Header.Get("X-Authorization-Clear") == "true" {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fsearch"`)
@@ -262,7 +262,7 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 	// there is no need to auth for static resource, such as "/manifest.json"
 	for _, suffix := range noAuthSuffix {
 		if strings.HasSuffix(r.URL.Path, suffix) {
-			return AccountConfigNoAuth, true
+			return accountConfigNoAuth, true
 		}
 	}
 	auth := r.Header.Get("Authorization")
