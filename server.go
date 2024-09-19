@@ -61,9 +61,9 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 	return true
 }
 
-var AccountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
+var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
-// NewServer create a new unilog server. searchPath is the search path. indexPath is the static file path, it must end with /.
+// NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
 // configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
 // authMap: map[username]AccountConfig, it can be nil if you do not need auth
 // for example:
@@ -75,23 +75,22 @@ var AccountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAp
 // wsRegisterPath: /ws
 //
 // authMap: nil
-func NewServer(searchPath string, indexPath string, registerPath string, authMap map[string]*AccountConfig) *Server {
+func NewServer(indexPath string, wsRegisterPath string, authMap map[string]*AccountConfig) *Server {
 	if !strings.HasSuffix(indexPath, "/") {
 		panic("indexPath must end with /")
 	}
-	searchPathHttp := searchPath
+	searchPath := fmt.Sprintf("%s_search", indexPath)
 	var configPath string
-	if searchPath == "/" {
+	if indexPath == "/" {
 		configPath = "/_internal/config"
 	} else {
-		temp := strings.TrimSuffix(searchPath, "/")
-		// change /user/home/  to /user/_internal/config
-		configPath = temp[:strings.LastIndex(temp, "/")] + "/_internal/config"
+		temp := strings.TrimSuffix(indexPath, "/")
+		configPath = temp + "/_internal/config"
 	}
-
-	return &Server{searchPathHTTP: searchPathHttp,
+	return &Server{
+		searchPathHTTP:      searchPath,
 		indexPath:           indexPath,
-		wsRegisterPath:      registerPath,
+		wsRegisterPath:      wsRegisterPath,
 		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
 		configPath:          configPath,
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
@@ -114,8 +113,12 @@ func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 	mux.GET(s.configPath, func(ctx *gin.Context) {
 		s.configHandler(ctx.Writer, ctx.Request)
 	})
+	subproto := websocket.Server{
+		Handshake: subProtocolHandshake,
+		Handler:   s.registerWS,
+	}
 	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
-		websocket.Handler(s.registerWS).ServeHTTP(ctx.Writer, ctx.Request)
+		subproto.ServeHTTP(ctx.Writer, ctx.Request)
 	})
 	mux.Use(func(ctx *gin.Context) {
 		w, r := ctx.Writer, ctx.Request
@@ -125,6 +128,7 @@ func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 		}
 		ctx.Next()
 	})
+
 	mux.StaticFS(s.indexPath, fileSystem)
 }
 
@@ -164,35 +168,33 @@ func (w *wsSyncMap) Get(uid uint64) (*websocket.Conn, bool) {
 
 var nodeIdGen uint64 = 10000
 
+type RegisterInfo struct {
+	AppName  string `json:"appName"`
+	HostName string `json:"hostName"`
+}
+
+const wsProtocol = "lsh"
+
 func (s *Server) registerWS(ws *websocket.Conn) {
 	defer ws.Close()
+	protocols := ws.Config().Protocol
+	if len(protocols) == 0 || protocols[0] != wsProtocol {
+		return
+	}
 	var bufBytes []byte
-	log.Println("ready to accept a new client")
 	err := websocket.Message.Receive(ws, &bufBytes)
 	if err != nil {
-		log.Println("unilog: read error:", err.Error())
 		return
 	}
-	var buf schemeBytes
-	copy(buf[:], bufBytes)
-	log.Println(ws.Request().RemoteAddr, "register", buf.String())
-	if buf.Scheme() != protocol {
-		log.Printf("unilog: client protocol check error. it's should be `%s` ,but it's `%s`\n", protocol, buf.Scheme())
+	var registerInfo RegisterInfo
+	err = json.Unmarshal(bufBytes, &registerInfo)
+	if err != nil {
 		return
 	}
-	if !buf.CheckReserved() {
-		log.Printf("unilog: client protocol error. it's should be `00` ,but it's `%d`\n", buf[6:8])
-		return
-	}
-	appName := buf.AppName()
-	// please attention: ws.Request().RemoteAddr is not the real remote addr.
+	appName := registerInfo.AppName
 	// todo: and here is not support ipv6 and not support proxy
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
-	if s.appHostData.ExistsBy(appName, nodeId) {
-		log.Println("unilog : client already exists")
-		return
-	}
-	hostName := buf.HostName()
+	hostName := registerInfo.HostName
 	s.wsSyncMap.Set(nodeId, ws)
 	defer s.appHostData.Del(appName, nodeId)
 	defer s.wsSyncMap.Del(nodeId)
@@ -200,13 +202,11 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		var sendBytes []byte
 		err = websocket.Message.Receive(ws, &sendBytes) // 阻塞等待客户端关闭
 		if err != nil {
-			log.Println("unilog: read error:", err.Error())
 			return
 		}
 		var data sendData
 		err = json.Unmarshal(sendBytes, &data)
 		if err != nil {
-			log.Println("unilog: json.Unmarshal error:", err.Error())
 			return
 		}
 		switch data.ContentType {
@@ -214,7 +214,6 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 			var files []string
 			err = json.Unmarshal([]byte(data.Content), &files)
 			if err != nil {
-				log.Println("unilog: json.Unmarshal error:", err.Error())
 				return
 			}
 			sort.Strings(files)
@@ -223,16 +222,15 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		case contentTypeSearchResult:
 			dataCh, ok := s.searchResultSyncMap.Get(data.RequestId)
 			if !ok {
-				log.Printf("unilog: unknown requestId: %d", data.RequestId)
+				log.Printf("fsearch: unknown requestId: %d", data.RequestId)
 				continue
 			}
 			select {
 			case dataCh <- &data:
 			default:
-				log.Printf("unilog: default unknown requestId: %d", data.RequestId)
+				log.Printf("fsearch: dataCh is full, drop data, requestId: %d", data.RequestId)
 			}
 		default:
-			log.Println("unilog: unknown ContentType:", data.ContentType)
 			return
 		}
 
@@ -248,7 +246,7 @@ var noAuthSuffix = []string{".json", ".js", ".css", ".ico", ".png", ".jpg", ".jp
 
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *AccountConfig, result bool) {
 	if len(s.authMap) == 0 {
-		return AccountConfigNoAuth, true
+		return accountConfigNoAuth, true
 	}
 	if r.Header.Get("X-Authorization-Clear") == "true" {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fsearch"`)
@@ -264,10 +262,11 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 	// there is no need to auth for static resource, such as "/manifest.json"
 	for _, suffix := range noAuthSuffix {
 		if strings.HasSuffix(r.URL.Path, suffix) {
-			return AccountConfigNoAuth, true
+			return accountConfigNoAuth, true
 		}
 	}
 	auth := r.Header.Get("Authorization")
+	r.BasicAuth()
 	if !strings.HasPrefix(auth, "Basic ") {
 		return nil, false
 	}
@@ -280,7 +279,7 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 	if len(ss) != 2 {
 		return nil, false
 	}
-
+	//r.BasicAuth()
 	expected, ok := s.authMap[ss[0]]
 	if !ok {
 		return nil, false
@@ -322,13 +321,19 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	w.Write(body.ToBytes())
 }
-
-func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+func cors(w http.ResponseWriter, r *http.Request) (aborted bool) {
+	origin := r.Header.Get("origin")
+	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Headers", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "OPTIONS,POST,GET")
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+	return false
+}
+func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
+	if cors(w, r) {
 		return
 	}
 	accountInfo, ok := s.checkAuth(w, r)
@@ -367,7 +372,6 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 	kws := query["kw"]
 	files := query["files"]
 	hostName := query.Get("hostName")
-	log.Printf("remote addr: %s, query is=> %+v\n", r.RemoteAddr, query)
 	maxLines, err := strconv.ParseInt(query.Get("maxLines"), 10, 64)
 	if err != nil {
 		maxLines = defaultMaxLines
@@ -375,9 +379,37 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 	if maxLines > maxLinesLimit {
 		maxLines = maxLinesLimit
 	}
-	s.write(r.Context(), w, appName, hostName, nodeId, int(maxLines), files, kws...)
+	dataType := query.Get("dataType") // support text, html
+	overflowX := query.Get("overflowX")
+	fontSize, _ := strconv.ParseInt(query.Get("fontSize"), 10, 64)
+	normalColor := query.Get("normalColor")
+	isHref, _ := strconv.ParseBool(query.Get("isHref"))
+	hrefQuery := r.URL.Query()
+	hrefQuery.Set("isHref", "true")
+
+	if fontSize > 0 {
+		hrefQuery.Set("fontSize", strconv.FormatInt(fontSize, 10))
+	}
+	if overflowX != "" {
+		hrefQuery.Set("overflowX", overflowX)
+	}
+	if normalColor != "" {
+		hrefQuery.Set("normalColor", normalColor)
+	}
+	hrefQuery.Set("kw", replaceTraceId)
+	// todo
+	locationOrigin := query.Get("locationOrigin")
+	if locationOrigin == "" {
+		locationOrigin = r.Header.Get("Origin")
+	}
+	if locationOrigin == "" {
+		locationOrigin = r.Header.Get("Referer")
+	}
+	traceIdHref := fmt.Sprintf("%s%s?%s", locationOrigin, s.searchPathHTTP, hrefQuery.Encode())
+	s.write(r.Context(), isHref, overflowX, fontSize, normalColor, dataType, traceIdHref, w, appName, hostName, nodeId, int(maxLines), files, kws...)
 }
-func (s *Server) write(ctx context.Context, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
+
+func (s *Server) write(ctx context.Context, isHref bool, overflowX string, fontSize int64, normalColor string, dataType, traceIdHref string, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
 	if len(kws) == 0 {
 		return
 	}
@@ -448,7 +480,7 @@ func (s *Server) write(ctx context.Context, w http.ResponseWriter, appName, host
 			}
 			err := websocket.Message.Send(c, param.ToBytes())
 			if err != nil {
-				log.Printf("unilog: ws remote addr: %s: send error: %s\n", c.Request().RemoteAddr, err.Error())
+				log.Printf("fsearch: ws remote addr: %s: send error: %s\n", c.Request().RemoteAddr, err.Error())
 				return
 			}
 		}(conn)
@@ -486,8 +518,15 @@ func (s *Server) write(ctx context.Context, w http.ResponseWriter, appName, host
 		if data.Content == "" {
 			continue
 		}
-		if _, err := w.Write([]byte(data.Content)); err != nil {
-			return
+		if dataType == "html" {
+			if err := WriteColorHTML(isHref, overflowX, normalColor, fontSize, traceIdHref, strings.NewReader(data.Content), w); err != nil {
+				return
+			}
+		} else {
+			// text
+			if _, err := w.Write([]byte(data.Content)); err != nil {
+				return
+			}
 		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
@@ -506,10 +545,36 @@ func (r *respBody) ToBytes() []byte {
 	return b
 }
 
+type trimPrefixFileSystem struct {
+	fs     http.FileSystem
+	prefix string
+}
+
+func (t *trimPrefixFileSystem) Open(name string) (http.File, error) {
+	name = strings.TrimPrefix(name, t.prefix)
+	if name == "" {
+		name = "/"
+	}
+	return t.fs.Open(name)
+}
+func subProtocolHandshake(config *websocket.Config, req *http.Request) error {
+	for _, proto := range config.Protocol {
+		if proto == wsProtocol {
+			config.Protocol = []string{proto}
+			return nil
+		}
+	}
+	return websocket.ErrBadWebSocketProtocol
+}
+
 func (s *Server) registerWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
 	mux.HandleFunc(s.configPath, s.configHandler)
-	fs := http.FileServer(fileSystem)
+	fs := http.FileServer(&trimPrefixFileSystem{
+		fs: fileSystem,
+		// prefix not include suffix /
+		prefix: strings.TrimSuffix(s.indexPath, "/"),
+	})
 	mux.HandleFunc(s.indexPath, func(w http.ResponseWriter, r *http.Request) {
 		// check auth
 		if _, ok := s.checkAuth(w, r); !ok {
@@ -517,7 +582,11 @@ func (s *Server) registerWithMux(mux *http.ServeMux, fileSystem http.FileSystem)
 		}
 		fs.ServeHTTP(w, r)
 	})
-	mux.Handle(s.wsRegisterPath, websocket.Handler(s.registerWS))
+	subproto := websocket.Server{
+		Handshake: subProtocolHandshake,
+		Handler:   s.registerWS,
+	}
+	mux.Handle(s.wsRegisterPath, subproto)
 }
 
 type searchResultSyncMap struct {
