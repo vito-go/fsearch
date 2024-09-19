@@ -6,7 +6,9 @@ import (
 	"github.com/vito-go/fsearch/util"
 	"golang.org/x/net/websocket"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -24,7 +26,7 @@ type Client struct {
 // NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
 // hostName is the name of the host where the application is located,
 // which is used to distinguish the host where the file is located. it can be empty.
-func NewClient(dir string, appName string, hostName string) (*Client, error) {
+func NewClient(searchTargetDir string, appName string, hostName string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
 	}
@@ -32,17 +34,13 @@ func NewClient(dir string, appName string, hostName string) (*Client, error) {
 		hostName, _ = util.GetPrivateIP()
 	}
 	if hostName == "" {
-		hostName = "127.0.0.1"
+		hostName, _ = os.Hostname()
 	}
-	//search, err := fsearch.NewDirSearch(dir)
-	//if err != nil {
-	//	return nil, err
-	//}
 	return &Client{
-		dir:      dir,
+		dir:      searchTargetDir,
 		hostName: hostName,
 		appName:  appName,
-		dirGrep:  &DirGrep{Dir: dir},
+		dirGrep:  &DirGrep{Dir: searchTargetDir},
 	}, nil
 }
 
@@ -51,18 +49,22 @@ func (c *Client) RegisterToCenter(wsAddr string) {
 	go c.register(wsAddr, c.appName, c.hostName)
 }
 
-func (c *Client) RegisterWithHTTP(port uint16, searchPath string) {
+func (c *Client) RegisterWithHTTP(port uint16, searchPath string) error {
+	addr := fmt.Sprintf(":%d", port)
+
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc(searchPath, c.searchText)
-		addr := fmt.Sprintf(":%d", port)
-		log.Println("unilog Client: ready to start http server, addr: []", addr)
-		err := http.ListenAndServe(addr, mux)
+		err := http.Serve(lis, mux)
 		if err != nil {
-			log.Println("ListenAndServe error:", err.Error())
+			log.Printf("http.Serve error: %s\n", err.Error())
 		}
 	}()
-
+	return nil
 }
 
 // register route address. if register success, it will check files every 30 seconds.
@@ -79,17 +81,20 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 	if localHost == "" {
 		localHost = "127.0.0.1"
 	}
-	log.Println("unilog Client: ready to register ws:", addr)
-	ws, err := websocket.Dial(addr, "", fmt.Sprintf("http://%s", localHost))
+	ws, err := websocket.Dial(addr, wsProtocol, fmt.Sprintf("http://%s", localHost))
 	if err != nil {
-		log.Println("register error:", err.Error())
+		log.Println("websocket.Dial error: ", err.Error())
 		return
 	}
 	defer ws.Close()
-	b := NewSchemeBytes(appName, hostName)
+	registerInfo := RegisterInfo{
+		AppName:  appName,
+		HostName: hostName,
+	}
+	b, _ := json.Marshal(registerInfo)
 	err = websocket.Message.Send(ws, b[:])
 	if err != nil {
-		log.Println("send error:", err.Error())
+
 		return
 	}
 	go func() {
@@ -97,12 +102,10 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		for {
 			newFiles := c.dirGrep.FileNames()
 			if !slicesEqual(oldFiles, newFiles) {
-				log.Printf("files changed, old: %v, new: %v\n", oldFiles, newFiles)
 				newLinesBytes, _ := json.Marshal(newFiles)
 				sendBytes, _ := json.Marshal(sendData{ContentType: contentTypeFiles, Content: string(newLinesBytes)})
 				err = websocket.Message.Send(ws, sendBytes)
 				if err != nil {
-					log.Println("send error:", err.Error())
 					return
 				}
 				oldFiles = newFiles
@@ -115,7 +118,7 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 		var buf []byte
 		err = websocket.Message.Receive(ws, &buf)
 		if err != nil {
-			log.Println("receive error:", err.Error())
+
 			return
 		}
 		var param searchParam
