@@ -28,11 +28,11 @@ func main() {
 func clientRegister() {
 	appName := "demoApp"
 	searchDir := "../testdata" // can be any directory, especially for logs/
-	cli, err := fsearch.NewClient(searchDir, appName)
+	cli, err := fsearch.NewClient(appName, searchDir)
 	if err != nil {
 		panic(err)
 	}
-	centerWSAddr := "ws://127.0.0.1:9097/ws"
+	centerWSAddr := "ws://127.0.0.1:9097/_ws"
 	cli.RegisterToCenter(centerWSAddr)
 	// use http to search, param is kw and files, multi kw and multi files are supported
 	// query: kw, files, maxLines
@@ -52,7 +52,6 @@ func clientRegister() {
 
 // serverStart start server.
 func serverStart() {
-	wsRegisterPath := "/ws" // the path that client register to: ws://127.0.0.1:9097/ws
 	var indexPath string
 	indexPath = "/" // index path must end with /, usually it's a single slash /
 	//indexPath = "/" // index path must end with /
@@ -67,7 +66,7 @@ func serverStart() {
 	//}
 	//authMap can be nil, if it's nil, no auth is required
 	// if excludedAppNames is not nil, then it will be used to exclude some appNames
-	server := fsearch.NewServer(indexPath, wsRegisterPath, authMap)
+	server := fsearch.NewServer(indexPath, authMap)
 	//wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.2/web.zip
 	//unzip web.zip
 	// the staticDir is that you download and unzip above, more details in README.md

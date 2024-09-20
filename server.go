@@ -63,6 +63,11 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
+const (
+	searchPathSuffix = "_search"
+	wsRegisterSuffix = "_ws"
+)
+
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
 // configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
 // authMap: map[username]AccountConfig, it can be nil if you do not need auth
@@ -75,11 +80,12 @@ var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAp
 // wsRegisterPath: /ws
 //
 // authMap: nil
-func NewServer(indexPath string, wsRegisterPath string, authMap map[string]*AccountConfig) *Server {
+func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 	if !strings.HasSuffix(indexPath, "/") {
 		panic("indexPath must end with /")
 	}
-	searchPath := fmt.Sprintf("%s_search", indexPath)
+	searchPath := indexPath + searchPathSuffix
+	wsRegisterPath := indexPath + wsRegisterSuffix
 	var configPath string
 	if indexPath == "/" {
 		configPath = "/_internal/config"
@@ -192,7 +198,6 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		return
 	}
 	appName := registerInfo.AppName
-	// todo: and here is not support ipv6 and not support proxy
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
 	hostName := registerInfo.HostName
 	s.wsSyncMap.Set(nodeId, ws)
@@ -200,7 +205,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 	defer s.wsSyncMap.Del(nodeId)
 	for {
 		var sendBytes []byte
-		err = websocket.Message.Receive(ws, &sendBytes) // 阻塞等待客户端关闭
+		err = websocket.Message.Receive(ws, &sendBytes) // block until the client close the connection
 		if err != nil {
 			return
 		}
@@ -266,7 +271,7 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 		}
 	}
 	auth := r.Header.Get("Authorization")
-	r.BasicAuth()
+	//todo use r.BasicAuth()
 	if !strings.HasPrefix(auth, "Basic ") {
 		return nil, false
 	}

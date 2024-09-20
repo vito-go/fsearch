@@ -24,7 +24,7 @@ type Client struct {
 }
 
 // NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
-func NewClient(searchTargetDir string, appName string) (*Client, error) {
+func NewClient(appName, searchTargetDir string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
 	}
@@ -43,6 +43,8 @@ func NewClient(searchTargetDir string, appName string) (*Client, error) {
 }
 
 // RegisterToCenter register to center. wsAddr is the address of the center.
+// wsAddr is the address of the center, whose format is ws://host:port+<serverIndexPath>+_ws
+// for example, serverIndexPath is /, then wsAddr is ws://host:port/_ws
 func (c *Client) RegisterToCenter(wsAddr string) {
 	go c.register(wsAddr, c.appName, c.hostName)
 }
