@@ -73,8 +73,9 @@ func (c *Client) register(addr string, appName string, hostName string) {
 	// use time.Ticker to replace time.Sleep
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		c.forWS(addr, appName, hostName)
+		<-ticker.C
 	}
 
 }

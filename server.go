@@ -2,7 +2,6 @@ package fsearch
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -131,8 +130,6 @@ func (g *ginHandler) Handle(ctx *gin.Context) {
 		prefix: prefix,
 	}
 	switch path {
-	case "/":
-		http.FileServer(f).ServeHTTP(ctx.Writer, ctx.Request)
 	case g.s.searchPathHTTP:
 		g.s.searchTextHTTP(ctx.Writer, ctx.Request)
 	case g.s.configPath:
@@ -144,6 +141,10 @@ func (g *ginHandler) Handle(ctx *gin.Context) {
 		}
 		subproto.ServeHTTP(ctx.Writer, ctx.Request)
 	default:
+		_, pass := g.s.checkAuth(ctx.Writer, ctx.Request)
+		if !pass {
+			return
+		}
 		http.FileServer(f).ServeHTTP(ctx.Writer, ctx.Request)
 	}
 }
@@ -193,10 +194,6 @@ const wsProtocol = "lsh"
 
 func (s *Server) registerWS(ws *websocket.Conn) {
 	defer ws.Close()
-	protocols := ws.Config().Protocol
-	if len(protocols) == 0 || protocols[0] != wsProtocol {
-		return
-	}
 	var bufBytes []byte
 	err := websocket.Message.Receive(ws, &bufBytes)
 	if err != nil {
@@ -280,26 +277,15 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 			return accountConfigNoAuth, true
 		}
 	}
-	auth := r.Header.Get("Authorization")
-	//todo use r.BasicAuth()
-	if !strings.HasPrefix(auth, "Basic ") {
-		return nil, false
-	}
-	encoded := auth[6:]
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, false
-	}
-	ss := strings.Split(string(decoded), ":")
-	if len(ss) != 2 {
-		return nil, false
-	}
-	//r.BasicAuth()
-	expected, ok := s.authMap[ss[0]]
+	user, password, ok := r.BasicAuth()
 	if !ok {
 		return nil, false
 	}
-	if expected.Password != ss[1] {
+	expected, ok := s.authMap[user]
+	if !ok {
+		return nil, false
+	}
+	if expected.Password != password {
 		return nil, false
 	}
 	return expected, true
@@ -390,7 +376,6 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 		maxLines = maxLinesLimit
 	}
 	dataType := query.Get("dataType") // support text, html
-	overflowX := query.Get("overflowX")
 	fontSize, _ := strconv.ParseInt(query.Get("fontSize"), 10, 64)
 	normalColor := query.Get("normalColor")
 	isHref, _ := strconv.ParseBool(query.Get("isHref"))
@@ -399,9 +384,6 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if fontSize > 0 {
 		hrefQuery.Set("fontSize", strconv.FormatInt(fontSize, 10))
-	}
-	if overflowX != "" {
-		hrefQuery.Set("overflowX", overflowX)
 	}
 	if normalColor != "" {
 		hrefQuery.Set("normalColor", normalColor)
@@ -416,10 +398,10 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 		locationOrigin = r.Header.Get("Referer")
 	}
 	traceIdHref := fmt.Sprintf("%s%s?%s", locationOrigin, s.searchPathHTTP, hrefQuery.Encode())
-	s.write(r.Context(), isHref, overflowX, fontSize, normalColor, dataType, traceIdHref, w, appName, hostName, nodeId, int(maxLines), files, kws...)
+	s.write(r.Context(), isHref, fontSize, normalColor, dataType, traceIdHref, w, appName, hostName, nodeId, int(maxLines), files, kws...)
 }
 
-func (s *Server) write(ctx context.Context, isHref bool, overflowX string, fontSize int64, normalColor string, dataType, traceIdHref string, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
+func (s *Server) write(ctx context.Context, isHref bool, fontSize int64, normalColor string, dataType, traceIdHref string, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
 	if len(kws) == 0 {
 		return
 	}
@@ -529,7 +511,7 @@ func (s *Server) write(ctx context.Context, isHref bool, overflowX string, fontS
 			continue
 		}
 		if dataType == "html" {
-			if err := WriteColorHTML(isHref, overflowX, normalColor, fontSize, traceIdHref, strings.NewReader(data.Content), w); err != nil {
+			if err := WriteColorHTML(isHref, normalColor, fontSize, traceIdHref, strings.NewReader(data.Content), w); err != nil {
 				return
 			}
 		} else {
