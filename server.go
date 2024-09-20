@@ -64,8 +64,8 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
 const (
-	searchPathSuffix = "_search"
-	wsRegisterSuffix = "_ws"
+	searchPathSuffix = "search"
+	wsRegisterSuffix = "ws"
 )
 
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
@@ -113,29 +113,39 @@ func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem)
 // RegisterWithGin register to gin. fileSystem is the static file system.
 func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 	// user middleware to check auth
-	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
-		s.searchTextHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.GET(s.configPath, func(ctx *gin.Context) {
-		s.configHandler(ctx.Writer, ctx.Request)
-	})
-	subproto := websocket.Server{
-		Handshake: subProtocolHandshake,
-		Handler:   s.registerWS,
-	}
-	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
-		subproto.ServeHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.Use(func(ctx *gin.Context) {
-		w, r := ctx.Writer, ctx.Request
-		if _, ok := s.checkAuth(w, r); !ok {
-			ctx.Abort()
-			return
-		}
-		ctx.Next()
-	})
+	g := ginHandler{s: s, fs: fileSystem}
+	mux.HEAD(s.indexPath+"*path", g.Handle)
+	mux.GET(s.indexPath+"*path", g.Handle)
+}
 
-	mux.StaticFS(s.indexPath, fileSystem)
+type ginHandler struct {
+	s  *Server
+	fs http.FileSystem
+}
+
+func (g *ginHandler) Handle(ctx *gin.Context) {
+	prefix := strings.TrimSuffix(g.s.indexPath, "/")
+	path := ctx.Request.URL.Path
+	f := &trimPrefixFileSystem{
+		fs:     g.fs,
+		prefix: prefix,
+	}
+	switch path {
+	case "/":
+		http.FileServer(f).ServeHTTP(ctx.Writer, ctx.Request)
+	case g.s.searchPathHTTP:
+		g.s.searchTextHTTP(ctx.Writer, ctx.Request)
+	case g.s.configPath:
+		g.s.configHandler(ctx.Writer, ctx.Request)
+	case g.s.wsRegisterPath:
+		subproto := websocket.Server{
+			Handshake: subProtocolHandshake,
+			Handler:   g.s.registerWS,
+		}
+		subproto.ServeHTTP(ctx.Writer, ctx.Request)
+	default:
+		http.FileServer(f).ServeHTTP(ctx.Writer, ctx.Request)
+	}
 }
 
 // StartListenAndServe start server. addr is the listen address, for example: :9097
@@ -296,12 +306,7 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 }
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "*")
-
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+	if cors(w, r) {
 		return
 	}
 	user, ok := s.checkAuth(w, r)
