@@ -6,12 +6,10 @@ Support local remote online registration search and single machine search.
 ## Quick Start
 - Look at the example directory for more details.
 ### Server
-
-```shell
-	wget https://github.com/vito-go/fsearch_flutter/releases/download/v0.0.5/web.zip
-	unzip web.zip
-
-```
+- go to the release page to download the `web.zip` file
+  - https://github.com/vito-go/fsearch_flutter/releases/
+- unzip the `web.zip` file
+ 
 
 ```go
 package main
@@ -61,13 +59,11 @@ import (
 func main() {
 	appName := "demoApp"
 	searchDir := "github.com/vito-go/fsearch" // can be any directory, especially for logs/ 
-	hostName, _ := util.GetPrivateIP()        //hostName can be any flag
-	cli, err := fsearch.NewClient(searchDir, appName, hostName)
+	cli, err := fsearch.NewClient(searchDir, appName)
 	if err != nil {
 		panic(err)
 	}
 	cli.RegisterToCenter("ws://127.0.0.1:9097/wsRegister")
-	//cli.RegisterToCenter("ws://vitogo.tpddns.cn:9097/ws")
 	// write here your own code instead of select {}
 	select {}
 }
@@ -81,7 +77,4 @@ func main() {
 <img src="./images/fsearch2.png" />`
 
 ## TODO
-
-- auth support  
-    - done
-- the result grep may be not a whole line, but a part of line, so we need to show the whole line using `strings.Builder`
+- [ ] Add more search options
