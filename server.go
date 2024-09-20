@@ -64,8 +64,8 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
 const (
-	searchPathSuffix = "search"
-	wsRegisterSuffix = "ws"
+	searchPathSuffix = "_search"
+	wsRegisterSuffix = "_ws"
 )
 
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
