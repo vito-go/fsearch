@@ -36,23 +36,21 @@ func getLevelColor(level string) (string, bool) {
 
 const replaceTraceId = "TRACE_ID"
 
-func WriteColorHTML(isHref bool, overflowX string, normalColor string, fontSize int64, traceIdHref string, src io.Reader, dst io.Writer) error {
+func WriteColorHTML(isHref bool, normalColor string, fontSize int64, traceIdHref string, src io.Reader, dst io.Writer) error {
 	// 读取文件内容
 	scanner := bufio.NewScanner(src)
 	var buf bytes.Buffer
 	if isHref {
-		if overflowX != "" {
-			buf.Write([]byte(fmt.Sprintf("overflow-x: %s;", overflowX)))
-		}
+		//word-wrap:break-word;
+		buf.Write([]byte("word-wrap:break-word;"))
 		if fontSize > 0 {
 			buf.Write([]byte(fmt.Sprintf("font-size: %dpx;", fontSize)))
 		}
 		if normalColor != "" {
 			buf.Write([]byte(fmt.Sprintf("color: %s;", normalColor)))
 		}
-
 	}
-	_, err := dst.Write([]byte(fmt.Sprintf(`<div id="container" style="%s">`, buf.String())))
+	_, err := dst.Write([]byte(fmt.Sprintf(`<div id="fsearch" style="%s ">`, buf.String())))
 	if err != nil {
 		return err
 	}

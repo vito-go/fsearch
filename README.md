@@ -30,7 +30,7 @@ func main() {
 		// you can add more account here		
 	}
 	// authMap can be nil if you don't need auth
-	server := fsearch.NewServer( "/", "/wsRegister", authMap)
+	server := fsearch.NewServer( "/",  authMap)
 	log.Println("server start: 9097")
 	// the dir is that you download and unzip above 
 	staticWebFile := http.Dir("web")

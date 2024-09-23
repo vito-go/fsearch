@@ -2,7 +2,6 @@ package fsearch
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -63,6 +62,11 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
+const (
+	searchPathSuffix = "_search"
+	wsRegisterSuffix = "_ws"
+)
+
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
 // configPath is calculated based on searchPath. wsRegisterPath is the websocket register path.
 // authMap: map[username]AccountConfig, it can be nil if you do not need auth
@@ -75,11 +79,12 @@ var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAp
 // wsRegisterPath: /ws
 //
 // authMap: nil
-func NewServer(indexPath string, wsRegisterPath string, authMap map[string]*AccountConfig) *Server {
+func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 	if !strings.HasSuffix(indexPath, "/") {
 		panic("indexPath must end with /")
 	}
-	searchPath := fmt.Sprintf("%s_search", indexPath)
+	searchPath := indexPath + searchPathSuffix
+	wsRegisterPath := indexPath + wsRegisterSuffix
 	var configPath string
 	if indexPath == "/" {
 		configPath = "/_internal/config"
@@ -107,29 +112,41 @@ func (s *Server) RegisterWithMux(mux *http.ServeMux, fileSystem http.FileSystem)
 // RegisterWithGin register to gin. fileSystem is the static file system.
 func (s *Server) RegisterWithGin(mux *gin.Engine, fileSystem http.FileSystem) {
 	// user middleware to check auth
-	mux.GET(s.searchPathHTTP, func(ctx *gin.Context) {
-		s.searchTextHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.GET(s.configPath, func(ctx *gin.Context) {
-		s.configHandler(ctx.Writer, ctx.Request)
-	})
-	subproto := websocket.Server{
-		Handshake: subProtocolHandshake,
-		Handler:   s.registerWS,
+	g := ginHandler{s: s, fs: fileSystem}
+	mux.HEAD(s.indexPath+"*path", g.Handle)
+	mux.GET(s.indexPath+"*path", g.Handle)
+}
+
+type ginHandler struct {
+	s  *Server
+	fs http.FileSystem
+}
+
+func (g *ginHandler) Handle(ctx *gin.Context) {
+	prefix := strings.TrimSuffix(g.s.indexPath, "/")
+	path := ctx.Request.URL.Path
+	f := &trimPrefixFileSystem{
+		fs:     g.fs,
+		prefix: prefix,
 	}
-	mux.GET(s.wsRegisterPath, func(ctx *gin.Context) {
+	switch path {
+	case g.s.searchPathHTTP:
+		g.s.searchTextHTTP(ctx.Writer, ctx.Request)
+	case g.s.configPath:
+		g.s.configHandler(ctx.Writer, ctx.Request)
+	case g.s.wsRegisterPath:
+		subproto := websocket.Server{
+			Handshake: subProtocolHandshake,
+			Handler:   g.s.registerWS,
+		}
 		subproto.ServeHTTP(ctx.Writer, ctx.Request)
-	})
-	mux.Use(func(ctx *gin.Context) {
-		w, r := ctx.Writer, ctx.Request
-		if _, ok := s.checkAuth(w, r); !ok {
-			ctx.Abort()
+	default:
+		_, pass := g.s.checkAuth(ctx.Writer, ctx.Request)
+		if !pass {
 			return
 		}
-		ctx.Next()
-	})
-
-	mux.StaticFS(s.indexPath, fileSystem)
+		http.FileServer(f).ServeHTTP(ctx.Writer, ctx.Request)
+	}
 }
 
 // StartListenAndServe start server. addr is the listen address, for example: :9097
@@ -177,10 +194,6 @@ const wsProtocol = "lsh"
 
 func (s *Server) registerWS(ws *websocket.Conn) {
 	defer ws.Close()
-	protocols := ws.Config().Protocol
-	if len(protocols) == 0 || protocols[0] != wsProtocol {
-		return
-	}
 	var bufBytes []byte
 	err := websocket.Message.Receive(ws, &bufBytes)
 	if err != nil {
@@ -192,7 +205,6 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 		return
 	}
 	appName := registerInfo.AppName
-	// todo: and here is not support ipv6 and not support proxy
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
 	hostName := registerInfo.HostName
 	s.wsSyncMap.Set(nodeId, ws)
@@ -200,7 +212,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 	defer s.wsSyncMap.Del(nodeId)
 	for {
 		var sendBytes []byte
-		err = websocket.Message.Receive(ws, &sendBytes) // 阻塞等待客户端关闭
+		err = websocket.Message.Receive(ws, &sendBytes) // block until the client close the connection
 		if err != nil {
 			return
 		}
@@ -265,38 +277,22 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 			return accountConfigNoAuth, true
 		}
 	}
-	auth := r.Header.Get("Authorization")
-	r.BasicAuth()
-	if !strings.HasPrefix(auth, "Basic ") {
-		return nil, false
-	}
-	encoded := auth[6:]
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, false
-	}
-	ss := strings.Split(string(decoded), ":")
-	if len(ss) != 2 {
-		return nil, false
-	}
-	//r.BasicAuth()
-	expected, ok := s.authMap[ss[0]]
+	user, password, ok := r.BasicAuth()
 	if !ok {
 		return nil, false
 	}
-	if expected.Password != ss[1] {
+	expected, ok := s.authMap[user]
+	if !ok {
+		return nil, false
+	}
+	if expected.Password != password {
 		return nil, false
 	}
 	return expected, true
 }
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "*")
-
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Max-Age", strconv.FormatInt(int64(time.Second*60*60*24*3), 10))
+	if cors(w, r) {
 		return
 	}
 	user, ok := s.checkAuth(w, r)
@@ -380,7 +376,6 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 		maxLines = maxLinesLimit
 	}
 	dataType := query.Get("dataType") // support text, html
-	overflowX := query.Get("overflowX")
 	fontSize, _ := strconv.ParseInt(query.Get("fontSize"), 10, 64)
 	normalColor := query.Get("normalColor")
 	isHref, _ := strconv.ParseBool(query.Get("isHref"))
@@ -389,9 +384,6 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if fontSize > 0 {
 		hrefQuery.Set("fontSize", strconv.FormatInt(fontSize, 10))
-	}
-	if overflowX != "" {
-		hrefQuery.Set("overflowX", overflowX)
 	}
 	if normalColor != "" {
 		hrefQuery.Set("normalColor", normalColor)
@@ -406,10 +398,10 @@ func (s *Server) searchTextHTTP(w http.ResponseWriter, r *http.Request) {
 		locationOrigin = r.Header.Get("Referer")
 	}
 	traceIdHref := fmt.Sprintf("%s%s?%s", locationOrigin, s.searchPathHTTP, hrefQuery.Encode())
-	s.write(r.Context(), isHref, overflowX, fontSize, normalColor, dataType, traceIdHref, w, appName, hostName, nodeId, int(maxLines), files, kws...)
+	s.write(r.Context(), isHref, fontSize, normalColor, dataType, traceIdHref, w, appName, hostName, nodeId, int(maxLines), files, kws...)
 }
 
-func (s *Server) write(ctx context.Context, isHref bool, overflowX string, fontSize int64, normalColor string, dataType, traceIdHref string, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
+func (s *Server) write(ctx context.Context, isHref bool, fontSize int64, normalColor string, dataType, traceIdHref string, w http.ResponseWriter, appName, hostName string, nodeId uint64, maxLines int, files []string, kws ...string) {
 	if len(kws) == 0 {
 		return
 	}
@@ -519,7 +511,7 @@ func (s *Server) write(ctx context.Context, isHref bool, overflowX string, fontS
 			continue
 		}
 		if dataType == "html" {
-			if err := WriteColorHTML(isHref, overflowX, normalColor, fontSize, traceIdHref, strings.NewReader(data.Content), w); err != nil {
+			if err := WriteColorHTML(isHref, normalColor, fontSize, traceIdHref, strings.NewReader(data.Content), w); err != nil {
 				return
 			}
 		} else {
