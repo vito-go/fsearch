@@ -301,10 +301,10 @@ func (s *Server) privateIp(w http.ResponseWriter, r *http.Request) {
 	if cors(w, r) {
 		return
 	}
-	_, ok := s.checkAuth(w, r)
-	if !ok {
-		return
-	}
+	//_, ok := s.checkAuth(w, r)
+	//if !ok {
+	//	return
+	//}
 	privateIPs, err := getPrivateIPs()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
