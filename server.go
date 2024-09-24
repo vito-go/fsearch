@@ -65,8 +65,12 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
 const (
-	searchPathSuffix = "_search"
-	wsRegisterSuffix = "_ws"
+	WsRegisterSubPath    = "_ws"
+	PrivateIpPathSubPath = "_internal/privateIp"
+)
+const (
+	searchPathSubPath = "_search"
+	configPathSubPath = "_internal/config"
 )
 
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
@@ -85,18 +89,12 @@ func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 	if !strings.HasSuffix(indexPath, "/") {
 		panic("indexPath must end with /")
 	}
-	searchPath := indexPath + searchPathSuffix
-	wsRegisterPath := indexPath + wsRegisterSuffix
+	searchPath := indexPath + searchPathSubPath
+	wsRegisterPath := indexPath + WsRegisterSubPath
 	var configPath string
 	var privateIpPath string
-	if indexPath == "/" {
-		configPath = "/_internal/config"
-		privateIpPath = "/_internal/privateIp"
-	} else {
-		temp := strings.TrimSuffix(indexPath, "/")
-		configPath = temp + "/_internal/config"
-		privateIpPath = temp + "/_internal/privateIp"
-	}
+	configPath = indexPath + configPathSubPath
+	privateIpPath = indexPath + PrivateIpPathSubPath
 	return &Server{
 		searchPathHTTP:      searchPath,
 		indexPath:           indexPath,
