@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ type Server struct {
 	searchPathHTTP      string
 	indexPath           string
 	configPath          string
+	privateIpPath       string
 	wsRegisterPath      string
 	appHostData         appHostData
 	searchResultSyncMap *searchResultSyncMap
@@ -86,11 +88,14 @@ func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 	searchPath := indexPath + searchPathSuffix
 	wsRegisterPath := indexPath + wsRegisterSuffix
 	var configPath string
+	var privateIpPath string
 	if indexPath == "/" {
 		configPath = "/_internal/config"
+		privateIpPath = "/_internal/privateIp"
 	} else {
 		temp := strings.TrimSuffix(indexPath, "/")
 		configPath = temp + "/_internal/config"
+		privateIpPath = temp + "/_internal/privateIp"
 	}
 	return &Server{
 		searchPathHTTP:      searchPath,
@@ -98,6 +103,7 @@ func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 		wsRegisterPath:      wsRegisterPath,
 		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
 		configPath:          configPath,
+		privateIpPath:       privateIpPath,
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
 		appHostData:         appHostData{mux: sync.RWMutex{}, data: make(map[string]map[uint64]*NodeInfo)},
 		authMap:             authMap,
@@ -140,6 +146,8 @@ func (g *ginHandler) Handle(ctx *gin.Context) {
 			Handler:   g.s.registerWS,
 		}
 		subproto.ServeHTTP(ctx.Writer, ctx.Request)
+	case g.s.privateIpPath:
+		g.s.privateIp(ctx.Writer, ctx.Request)
 	default:
 		_, pass := g.s.checkAuth(ctx.Writer, ctx.Request)
 		if !pass {
@@ -208,6 +216,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
 	hostName := registerInfo.HostName
 	s.wsSyncMap.Set(nodeId, ws)
+	s.appHostData.Set(appName, nodeId, hostName, nil)
 	defer s.appHostData.Del(appName, nodeId)
 	defer s.wsSyncMap.Del(nodeId)
 	for {
@@ -289,6 +298,24 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 		return nil, false
 	}
 	return expected, true
+}
+func (s *Server) privateIp(w http.ResponseWriter, r *http.Request) {
+	if cors(w, r) {
+		return
+	}
+	_, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
+	privateIPs, err := getPrivateIPs()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json;charset=utf-8")
+	b, _ := json.Marshal(privateIPs)
+	w.Write(b)
 }
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid CORS
@@ -562,6 +589,7 @@ func subProtocolHandshake(config *websocket.Config, req *http.Request) error {
 func (s *Server) registerWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
 	mux.HandleFunc(s.configPath, s.configHandler)
+	mux.HandleFunc(s.privateIpPath, s.privateIp)
 	fs := http.FileServer(&trimPrefixFileSystem{
 		fs: fileSystem,
 		// prefix not include suffix /
@@ -605,4 +633,17 @@ func (s *searchResultSyncMap) Get(requestId int64) (chan *sendData, bool) {
 		return ch, true
 	}
 	return nil, false
+}
+func getPrivateIPs() ([]string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	var items []string
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.IsPrivate() {
+			items = append(items, ipNet.IP.String())
+		}
+	}
+	return items, nil
 }

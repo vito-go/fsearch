@@ -23,7 +23,9 @@ type Client struct {
 	dirGrep  *DirGrep
 }
 
-// NewClient Create a new client. dir is the directory to be searched. appName is the name of the application.
+// NewClient Create a new client. searchTargetDir is the directory to be searched. appName is the name of the application.
+// You should only put text files in the target search directory, such as .txt, .log, .out, .go, .java, .py, .md, .yaml, .yml, .json, etc.
+// Don't put the binary file in target search  directory, like .so, .dll, .exe, .png, .jpg, .jpeg, .gif, .zip, etc.
 func NewClient(appName, searchTargetDir string) (*Client, error) {
 	if len(appName) == 0 {
 		panic("appName can not be empty")
@@ -46,7 +48,19 @@ func NewClient(appName, searchTargetDir string) (*Client, error) {
 // wsAddr is the address of the center, whose format is ws://host:port+<serverIndexPath>+_ws
 // for example, serverIndexPath is /, then wsAddr is ws://host:port/_ws
 func (c *Client) RegisterToCenter(wsAddr string) {
-	go c.register(wsAddr, c.appName, c.hostName)
+	go c.loopRegister(func() string {
+		return wsAddr
+	}, c.appName, c.hostName)
+}
+
+// WsAddrFunc is a function that returns the address of the center.
+// It is used to dynamically obtain the address of the center.
+type WsAddrFunc func() string
+
+// RegisterToCenterWithFunc  register to center with function. wsAddrFunc is a function that returns the address of the center.
+// Look RegisterToCenter for more details.
+func (c *Client) RegisterToCenterWithFunc(wsAddrFunc WsAddrFunc) {
+	go c.loopRegister(wsAddrFunc, c.appName, c.hostName)
 }
 
 func (c *Client) RegisterWithHTTP(port uint16, searchPath string) error {
@@ -69,17 +83,18 @@ func (c *Client) RegisterWithHTTP(port uint16, searchPath string) error {
 
 // register route address. if register success, it will check files every 30 seconds.
 // if files changed, it will send the changed files to the center.
-func (c *Client) register(addr string, appName string, hostName string) {
+func (c *Client) loopRegister(wsAddrFunc WsAddrFunc, appName string, hostName string) {
 	// use time.Ticker to replace time.Sleep
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
 	for {
-		c.forWS(addr, appName, hostName)
+		addr := wsAddrFunc()
+		c.register(addr, appName, hostName)
 		<-ticker.C
 	}
 
 }
-func (c *Client) forWS(addr string, appName string, hostName string) {
+func (c *Client) register(addr string, appName string, hostName string) {
 	originHost, _ := getPrivateIP()
 	if originHost == "" {
 		originHost = "127.0.0.1"
@@ -97,12 +112,12 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 	b, _ := json.Marshal(registerInfo)
 	err = websocket.Message.Send(ws, b[:])
 	if err != nil {
-
 		return
 	}
 	go func() {
 		var oldFiles []string
 		ticker := time.NewTicker(time.Second * 30)
+		// every 30 seconds, send files to center if files changed.
 		defer ticker.Stop()
 		for {
 			newFiles := c.dirGrep.FileNames()
@@ -118,12 +133,10 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			<-ticker.C
 		}
 	}()
-
 	for {
 		var buf []byte
 		err = websocket.Message.Receive(ws, &buf)
 		if err != nil {
-
 			return
 		}
 		var param searchParam
@@ -148,10 +161,6 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			FileMap:  filesMap,
 			Kws:      param.Kws,
 		})
-		//var content string
-		//if len(lines) > 0 {
-		//	content = strings.Join(lines, "\n")
-		//}
 		result, _ := json.Marshal(sendData{
 			RequestId:   param.RequestId,
 			Content:     builder.String(),
@@ -164,7 +173,6 @@ func (c *Client) forWS(addr string, appName string, hostName string) {
 			return
 		}
 	}
-	// every 30 seconds, send files to center if files changed.
 }
 
 type searchParam struct {
