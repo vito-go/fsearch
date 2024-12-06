@@ -38,6 +38,9 @@ func (f *DirGrep) fileNamesBy(fileMap map[string]struct{}) []string {
 		if entry.IsDir() {
 			continue
 		}
+		// You should only put text files in the search directory, such as .txt, .go, .java, .py, .js, .html, .css, .md, .yaml, .yml, .json, etc.
+		// Don't put the binary file in search directory, like .so, .dll, .exe, .png, .jpg, .jpeg, .gif, .zip, etc.
+
 		// filter file by file name when start with .
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue

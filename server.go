@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/websocket"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ type Server struct {
 	searchPathHTTP      string
 	indexPath           string
 	configPath          string
+	privateIpPath       string
 	wsRegisterPath      string
 	appHostData         appHostData
 	searchResultSyncMap *searchResultSyncMap
@@ -63,8 +65,12 @@ func (a *AccountConfig) CheckAppName(appName string) bool {
 var accountConfigNoAuth = &AccountConfig{Username: "_", Password: "_", AllowedAppNames: nil, ExcludedAppNames: nil}
 
 const (
-	searchPathSuffix = "_search"
-	wsRegisterSuffix = "_ws"
+	WsRegisterSubPath    = "_ws"
+	PrivateIpPathSubPath = "_internal/privateIp"
+)
+const (
+	searchPathSubPath = "_search"
+	configPathSubPath = "_internal/config"
 )
 
 // NewServer create a new fsearch server. searchPath is the search path. indexPath is the static file path, it must end with /.
@@ -83,21 +89,19 @@ func NewServer(indexPath string, authMap map[string]*AccountConfig) *Server {
 	if !strings.HasSuffix(indexPath, "/") {
 		panic("indexPath must end with /")
 	}
-	searchPath := indexPath + searchPathSuffix
-	wsRegisterPath := indexPath + wsRegisterSuffix
+	searchPath := indexPath + searchPathSubPath
+	wsRegisterPath := indexPath + WsRegisterSubPath
 	var configPath string
-	if indexPath == "/" {
-		configPath = "/_internal/config"
-	} else {
-		temp := strings.TrimSuffix(indexPath, "/")
-		configPath = temp + "/_internal/config"
-	}
+	var privateIpPath string
+	configPath = indexPath + configPathSubPath
+	privateIpPath = indexPath + PrivateIpPathSubPath
 	return &Server{
 		searchPathHTTP:      searchPath,
 		indexPath:           indexPath,
 		wsRegisterPath:      wsRegisterPath,
 		wsSyncMap:           &wsSyncMap{mux: sync.RWMutex{}, dataMap: make(map[uint64]*websocket.Conn)},
 		configPath:          configPath,
+		privateIpPath:       privateIpPath,
 		searchResultSyncMap: &searchResultSyncMap{mux: sync.RWMutex{}, dataMap: make(map[int64]chan *sendData, 1024)},
 		appHostData:         appHostData{mux: sync.RWMutex{}, data: make(map[string]map[uint64]*NodeInfo)},
 		authMap:             authMap,
@@ -140,6 +144,8 @@ func (g *ginHandler) Handle(ctx *gin.Context) {
 			Handler:   g.s.registerWS,
 		}
 		subproto.ServeHTTP(ctx.Writer, ctx.Request)
+	case g.s.privateIpPath:
+		g.s.privateIp(ctx.Writer, ctx.Request)
 	default:
 		_, pass := g.s.checkAuth(ctx.Writer, ctx.Request)
 		if !pass {
@@ -208,6 +214,7 @@ func (s *Server) registerWS(ws *websocket.Conn) {
 	nodeId := atomic.AddUint64(&nodeIdGen, 1)
 	hostName := registerInfo.HostName
 	s.wsSyncMap.Set(nodeId, ws)
+	s.appHostData.Set(appName, nodeId, hostName, nil)
 	defer s.appHostData.Del(appName, nodeId)
 	defer s.wsSyncMap.Del(nodeId)
 	for {
@@ -290,6 +297,24 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (account *Acc
 	}
 	return expected, true
 }
+func (s *Server) privateIp(w http.ResponseWriter, r *http.Request) {
+	if cors(w, r) {
+		return
+	}
+	//_, ok := s.checkAuth(w, r)
+	//if !ok {
+	//	return
+	//}
+	privateIPs, err := getPrivateIPs()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json;charset=utf-8")
+	b, _ := json.Marshal(privateIPs)
+	w.Write(b)
+}
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	// to avoid CORS
 	if cors(w, r) {
@@ -303,7 +328,15 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	clusterNodeFilter := make([]ClusterNode, 0, len(clusterNodes))
 	for i, node := range clusterNodes {
 		if user.CheckAppName(node.AppName) {
-			clusterNodeFilter = append(clusterNodeFilter, clusterNodes[i])
+			clusterNode := clusterNodes[i]
+			nodeInfos := make([]NodeInfo, len(clusterNode.NodeInfos))
+			copy(nodeInfos, clusterNode.NodeInfos)
+			sort.Slice(nodeInfos, func(i, j int) bool {
+				return nodeInfos[i].HostName < nodeInfos[j].HostName
+			})
+			//AllFiles are already sorted
+			clusterNode.NodeInfos = nodeInfos
+			clusterNodeFilter = append(clusterNodeFilter, clusterNode)
 		}
 	}
 	body := respBody{
@@ -562,6 +595,7 @@ func subProtocolHandshake(config *websocket.Config, req *http.Request) error {
 func (s *Server) registerWithMux(mux *http.ServeMux, fileSystem http.FileSystem) {
 	mux.HandleFunc(s.searchPathHTTP, s.searchTextHTTP)
 	mux.HandleFunc(s.configPath, s.configHandler)
+	mux.HandleFunc(s.privateIpPath, s.privateIp)
 	fs := http.FileServer(&trimPrefixFileSystem{
 		fs: fileSystem,
 		// prefix not include suffix /
@@ -605,4 +639,17 @@ func (s *searchResultSyncMap) Get(requestId int64) (chan *sendData, bool) {
 		return ch, true
 	}
 	return nil, false
+}
+func getPrivateIPs() ([]string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	var items []string
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.IsPrivate() {
+			items = append(items, ipNet.IP.String())
+		}
+	}
+	return items, nil
 }

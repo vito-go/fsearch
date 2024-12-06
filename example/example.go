@@ -32,7 +32,7 @@ func clientRegister() {
 	if err != nil {
 		panic(err)
 	}
-	centerWSAddr := "ws://127.0.0.1:9097/_ws"
+	centerWSAddr := "ws://127.0.0.1:9097/" + fsearch.WsRegisterSubPath
 	cli.RegisterToCenter(centerWSAddr)
 	// use http to search, param is kw and files, multi kw and multi files are supported
 	// query: kw, files, maxLines
