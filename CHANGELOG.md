@@ -5,6 +5,7 @@
 - Add server privateIp route to get the private IP of the server. sub path is `/_internal/privateIp`. It is useful when
   the server is behind the NAT.
 - WsRegisterSubPath and PrivateIpSubPath are exported in the server package
+- Sort the node list by the host name in the server
 
 ## 0.0.6
 

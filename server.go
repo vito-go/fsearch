@@ -328,7 +328,15 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	clusterNodeFilter := make([]ClusterNode, 0, len(clusterNodes))
 	for i, node := range clusterNodes {
 		if user.CheckAppName(node.AppName) {
-			clusterNodeFilter = append(clusterNodeFilter, clusterNodes[i])
+			clusterNode := clusterNodes[i]
+			nodeInfos := make([]NodeInfo, len(clusterNode.NodeInfos))
+			copy(nodeInfos, clusterNode.NodeInfos)
+			sort.Slice(nodeInfos, func(i, j int) bool {
+				return nodeInfos[i].HostName < nodeInfos[j].HostName
+			})
+			//AllFiles are already sorted
+			clusterNode.NodeInfos = nodeInfos
+			clusterNodeFilter = append(clusterNodeFilter, clusterNode)
 		}
 	}
 	body := respBody{
