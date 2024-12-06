@@ -246,7 +246,7 @@ func slicesEqual(a, b []string) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-const defaultMaxLines = 100
+const defaultMaxLines = 128
 const maxLinesLimit = 256
 
 func getPrivateIP() (string, error) {

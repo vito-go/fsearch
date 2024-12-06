@@ -1,3 +1,5 @@
+## 0.0.8
+- Optimize grepFromFile, find keywords from the file, use the pipe, support multiple keywords, support regular expression
 ## 0.0.7
 
 - Add APPName and node info immediately in server when receiving the register request

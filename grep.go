@@ -89,7 +89,8 @@ type SearchAndWriteParam struct {
 
 type fileNameAndLines struct {
 	fileName string
-	lines    []string
+	//lines    []string
+	content []byte
 }
 
 func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
@@ -116,13 +117,13 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lines := grepFromFile(maxLines, filePath, kws...)
-			if len(lines) == 0 {
+			lineBytes := grepFromFile1(maxLines, filePath, kws...)
+			if len(lineBytes) == 0 {
 				return
 			}
 			chanLines <- &fileNameAndLines{
 				fileName: name,
-				lines:    lines,
+				content:  lineBytes,
 			}
 		}()
 	}
@@ -132,19 +133,18 @@ func (f *DirGrep) SearchAndWrite(param *SearchAndWriteParam) {
 	}()
 	for fLines := range chanLines {
 		name := fLines.fileName
-		lines := fLines.lines
+		content := fLines.content
 		_, err := w.Write([]byte(fmt.Sprintf("<<<<<< --------------------%s %s -------------------- >>>>>>\n", hostName, name)))
 		if err != nil {
 			return
 		}
-		for _, line := range lines {
-			_, err := w.Write([]byte(line + "\n"))
-			if err != nil {
-				return
-			}
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+		_, err = w.Write(content)
+		if err != nil {
+			return
+		}
+		_, err = w.Write([]byte("\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
 		}
 	}
 }
@@ -205,6 +205,45 @@ func grepFromFile(maxLines int, filePath string, kws ...string) []string {
 	}
 	return buildLines(buf.Bytes(), maxLines, kwsFilter)
 }
+func grepFromFile1(maxLines int, filePath string, kws ...string) []byte {
+	kws = parseDuplicateKws(kws)
+	if len(kws) == 0 {
+		return nil
+	}
+	var grepArgs []string
+	//$ sh -c "grep -- a ./log1.txt |grep --  a | grep --color=never -m 1 -- a"
+	if len(kws) == 1 {
+		grepArgs = []string{"grep", "-m", strconv.Itoa(maxLines), "--color=never", "-a", "--", kws[0], filePath}
+	} else {
+		for i, kw := range kws {
+			kw := fmt.Sprintf("%q", kw)
+			// i:0 add file , last add -m and --color=never
+			if i == 0 {
+				grepArgs = append(grepArgs, "grep", "-a", "--", kw, filePath)
+			} else if i == len(kws)-1 {
+				grepArgs = append(grepArgs, "|", "grep", "--color=never", "-m", strconv.Itoa(maxLines), "--", kw)
+			} else {
+				grepArgs = append(grepArgs, "|", "grep", "--", kw)
+			}
+		}
+
+	}
+	// maxLines * 2 in case the number of lines found by the grep command in the file is not enough maxLines
+	log.Println(strings.Join(grepArgs, " "))
+	cmd := exec.Command("sh", "-c", strings.Join(grepArgs, " "))
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	if err != nil {
+		log.Println(err.Error())
+		//  err may be io.EOF, we ignore it
+		//  signal: broken pipe when exceed maxLines, we ignore it
+		//  exit status 1 when no match, we ignore it
+		return nil
+	}
+	return buf.Bytes()
+}
 
 // parseDuplicateKws parse duplicate []string and remain the order
 func parseDuplicateKws(kws []string) []string {
@@ -214,6 +253,7 @@ func parseDuplicateKws(kws []string) []string {
 	kwsMap := make(map[string]struct{}, len(kws))
 	var kwsResult []string
 	for _, kw := range kws {
+		kw = strings.TrimSpace(kw)
 		if kw == "" {
 			continue
 		}
